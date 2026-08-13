@@ -86,7 +86,7 @@ def build_equity(sample=240):
 
 
 def build_benchmark():
-    """基准：等权买入持有 7 只标的（不交易）"""
+    """基准：等权买入持有全部标的（不交易）"""
     fund_ret = {}
     all_dates = set()
     for code in config.POOL:
@@ -420,7 +420,7 @@ footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
   <div class="card">
     <h2><span class="dot"></span>策略信号（非你的持仓）<span class="cnt" id="sigCnt"></span></h2>
     <div id="signals"></div>
-    <div class="note">以下为策略每日扫描的 7 只候选标的信号，<b>不是你的持仓</b>；你的实际持仓见下方「我的持仓」。</div>
+    <div class="note">以下为策略每日扫描的 {n_funds} 只候选标的信号，<b>不是你的持仓</b>；你的实际持仓见下方「我的持仓」。</div>
   </div>
 
   <div class="card">
@@ -449,7 +449,7 @@ footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
   <div class="card">
     <h2><span class="dot"></span>绩效指标（2020 至今）</h2>
     <div class="grid" id="metricsGrid"></div>
-    <div class="note">对比基准「等权买入持有 7 只标的」：累计 +{bench_cum}%、最大回撤 {bench_mdd}%。本策略以更低回撤换取稳健收益。</div>
+    <div class="note">对比基准「等权买入持有 {n_funds} 只标的」：累计 +{bench_cum}%、最大回撤 {bench_mdd}%。本策略以更低回撤换取稳健收益。</div>
   </div>
 
   <div class="card">
@@ -459,7 +459,7 @@ footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
       <span class="lg"><span class="sw" style="background:#6366f1"></span>策略（金叉+MACD）</span>
       <span class="lg"><span class="sw" style="background:#94a3b8"></span>基准（买入持有）</span>
     </div>
-    <div class="note">7 只标的等权组合净值（2020 年至今）；策略空仓持币，基准始终满仓。</div>
+    <div class="note">{n_funds} 只标的等权组合净值（2020 年至今）；策略空仓持币，基准始终满仓。</div>
   </div>
 
   <div class="card">
