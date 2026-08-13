@@ -9,17 +9,18 @@ import etf_backtest as BT
 
 
 def fixed_hold_backtest(arr, fast, slow, hold_days):
-    """固定持有 N 天回测：金叉买入，持有满 N 天卖出"""
+    """固定持有 N 天回测：金叉(MA上穿) + MACD柱>0 买入，持有满 N 天卖出"""
     dates = [a["date"] for a in arr]
     nav = [a["nav"] for a in arr]
     mf = BT.ma(nav, fast)
     ms = BT.ma(nav, slow)
+    hist = signal_monitor.macd_hist(nav)
     trades = []
     pos = None
     for i in range(slow, len(nav)):
         if mf[i] is None or ms[i] is None or mf[i - 1] is None or ms[i - 1] is None:
             continue
-        cross_up = mf[i - 1] <= ms[i - 1] and mf[i] > ms[i]
+        cross_up = mf[i - 1] <= ms[i - 1] and mf[i] > ms[i] and hist[i] > 0
         if pos is None:
             if cross_up:
                 pos = {"bi": i, "bn": nav[i], "bd": dates[i]}
@@ -35,9 +36,7 @@ def fixed_hold_backtest(arr, fast, slow, hold_days):
 
 def build_data():
     f, s, hd = (config.STRATEGY["fast"], config.STRATEGY["slow"], config.STRATEGY["hold_days"])
-    # 1. 今日信号
     signals = signal_monitor.check_all()
-    # 2. 回测
     all_trades = []
     fund_detail = []
     yearly = {}
@@ -65,7 +64,6 @@ def build_data():
     avg_all = sum(t["ret"] for t in all_trades) / n_all if n_all else 0
     avg_hold = sum(t["hold"] for t in all_trades) / n_all if n_all else 0
 
-    # 参数空间：不同持有期的胜率-盈利率（供折线图交互）
     param_space = []
     for hold_days in [7, 10, 12, 15, 20, 25, 30, 45, 60]:
         pts = []
@@ -98,110 +96,121 @@ HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETF 量化信号 · MA10/30 金叉策略</title>
+<title>ETF 量化信号 · 支付宝 C 类 ETF 策略</title>
 <style>
 :root{
-  --bg:#f4f6fb; --card:#ffffff; --ink:#1f2430; --sub:#6b7280; --line:#e6e8ef;
-  --brand:#4f46e5; --up:#dc2626; --down:#16a34a; --gold:#d97706;
+  --bg:#eef1f7; --card:#ffffff; --ink:#1e293b; --sub:#64748b; --line:#e6e9f0;
+  --brand:#6366f1; --brand2:#8b5cf6; --up:#ef4444; --down:#10b981; --gold:#f59e0b;
+  --shadow:0 1px 2px rgba(15,23,42,.04),0 8px 24px rgba(15,23,42,.06);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.6;-webkit-font-smoothing:antialiased}
-.wrap{max-width:960px;margin:0 auto;padding:16px 16px 48px}
-header{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:18px 4px}
-header h1{font-size:22px;font-weight:800;letter-spacing:.5px}
-header .date{color:var(--sub);font-size:13px}
-.tag{display:inline-block;font-size:11px;color:var(--brand);background:#eef2ff;border:1px solid #e0e7ff;padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:middle}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px;box-shadow:0 1px 3px rgba(17,24,39,.05)}
-.card h2{font-size:15px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:6px}
-.card h2 .dot{width:8px;height:8px;border-radius:50%;background:var(--brand)}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
-.kpi{background:linear-gradient(135deg,#fafbff,#f4f6ff);border:1px solid var(--line);border-radius:12px;padding:14px;text-align:center}
-.kpi .v{font-size:26px;font-weight:800;color:var(--brand)}
-.kpi .v.red{color:var(--up)}
-.kpi .l{font-size:12px;color:var(--sub);margin-top:2px}
-.sig{display:flex;align-items:center;justify-content:space-between;padding:11px 12px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;gap:10px;flex-wrap:wrap}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:920px;margin:0 auto;padding:0 16px 48px}
+/* ===== Hero ===== */
+.hero{background:linear-gradient(135deg,#1e1b4b 0%,#4f46e5 55%,#7c3aed 100%);color:#fff;border-radius:20px;padding:26px 24px 22px;margin:16px 0 16px;box-shadow:0 12px 32px rgba(79,70,229,.28)}
+.hero .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.hero h1{font-size:23px;font-weight:800;letter-spacing:.3px}
+.hero .badge{display:inline-block;font-size:11px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);padding:3px 10px;border-radius:999px;margin-left:8px;vertical-align:2px;font-weight:600}
+.hero .sub{margin-top:8px;font-size:13px;color:rgba(255,255,255,.82)}
+.hero .date{font-size:12px;color:rgba(255,255,255,.75);white-space:nowrap}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:20px}
+.kpi{background:rgba(255,255,255,.13);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.2);border-radius:14px;padding:14px 12px;text-align:center}
+.kpi .v{font-size:26px;font-weight:800;line-height:1.1}
+.kpi .l{font-size:11px;color:rgba(255,255,255,.8);margin-top:4px}
+/* ===== Card ===== */
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;margin-bottom:14px;box-shadow:var(--shadow)}
+.card h2{font-size:15px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.card h2 .dot{width:9px;height:9px;border-radius:3px;background:linear-gradient(135deg,var(--brand),var(--brand2))}
+.card h2 .cnt{font-size:12px;color:var(--sub);font-weight:600;background:#f1f5f9;padding:2px 9px;border-radius:999px}
+/* ===== 信号 ===== */
+.sig{display:flex;align-items:center;justify-content:space-between;padding:13px 14px;border:1px solid var(--line);border-radius:13px;margin-bottom:9px;gap:10px;flex-wrap:wrap;transition:box-shadow .15s}
+.sig:hover{box-shadow:0 4px 14px rgba(15,23,42,.07)}
 .sig .nm{font-weight:600;font-size:14px}
 .sig .cd{font-size:12px;color:var(--sub)}
-.sig .st{font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;white-space:nowrap}
+.sig .st{font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;white-space:nowrap}
 .st.buy{background:#fef2f2;color:var(--up);border:1px solid #fecaca}
 .st.hold{background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe}
 .st.sell{background:#fffbeb;color:var(--gold);border:1px solid #fde68a}
-.st.wait{background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb}
-.sig .ret{font-size:13px;font-weight:700}
+.st.wait{background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0}
+.sig .ret{font-size:14px;font-weight:700}
 .ret.pos{color:var(--up)} .ret.neg{color:var(--down)}
-.empty{color:var(--sub);font-size:13px;text-align:center;padding:12px}
-.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:9px}
-.bar-row .yr{width:44px;font-size:12px;color:var(--sub);text-align:right}
-.bar-row .track{flex:1;height:18px;background:#eef0f6;border-radius:6px;position:relative;overflow:hidden}
-.bar-row .fill{height:100%;border-radius:6px;background:linear-gradient(90deg,#6366f1,#4f46e5);display:flex;align-items:center;justify-content:flex-end;padding-right:6px;font-size:11px;color:#fff;font-weight:600;min-width:26px}
-.line50{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#f59e0b;opacity:.7}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{padding:9px 8px;text-align:center;border-bottom:1px solid var(--line)}
-th{color:var(--sub);font-weight:600;font-size:12px}
-td:first-child,th:first-child{text-align:left}
-.pos{color:var(--up);font-weight:600} .neg{color:var(--down);font-weight:600}
-.note{font-size:12px;color:var(--sub);margin-top:10px;line-height:1.7}
-footer{text-align:center;color:#9ca3af;font-size:12px;margin-top:20px}
-@media(max-width:640px){
-  .grid{grid-template-columns:repeat(2,1fr)}
-  header h1{font-size:19px}
-  .kpi .v{font-size:22px}
-}
-.sliders{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:6px}
+.empty{color:var(--sub);font-size:13px;text-align:center;padding:14px;background:#f8fafc;border-radius:10px}
+/* ===== 历年胜率 ===== */
+.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.bar-row .yr{width:46px;font-size:12px;color:var(--sub);text-align:right;font-weight:600}
+.bar-row .track{flex:1;height:20px;background:#f1f5f9;border-radius:7px;position:relative;overflow:hidden}
+.bar-row .fill{height:100%;border-radius:7px;background:linear-gradient(90deg,var(--brand),var(--brand2));display:flex;align-items:center;justify-content:flex-end;padding-right:7px;font-size:11px;color:#fff;font-weight:700;min-width:30px}
+.line50{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--gold);opacity:.8}
+/* ===== 散点图 ===== */
+.sliders{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:4px}
 .slider-item{flex:1;min-width:200px}
-.slider-item label{font-size:12px;color:var(--sub);display:flex;justify-content:space-between}
+.slider-item label{font-size:12px;color:var(--sub);display:flex;justify-content:space-between;font-weight:600}
 .slider-item label b{color:var(--brand)}
 .slider-item input{width:100%;margin-top:6px;accent-color:var(--brand)}
 .ps-svg{width:100%;height:auto;display:block}
 .ps-legend{display:flex;gap:16px;font-size:12px;color:var(--sub);margin-top:8px;flex-wrap:wrap}
 .ps-legend .lg{display:flex;align-items:center;gap:5px}
 .ps-legend .sw{width:11px;height:11px;border-radius:50%;display:inline-block}
-.pick-note{font-size:12px;margin-top:10px;color:var(--sub);line-height:1.7}
+.pick-note{font-size:12.5px;margin-top:12px;padding:11px 13px;background:#f8fafc;border-radius:10px;color:var(--sub);line-height:1.7}
 .pick-note b{color:var(--brand)}
+/* ===== 表格 ===== */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:10px 8px;text-align:center;border-bottom:1px solid var(--line)}
+th{color:var(--sub);font-weight:600;font-size:12px;background:#f8fafc}
+td:first-child,th:first-child{text-align:left}
+tr:last-child td{border-bottom:none}
+.pos{color:var(--up);font-weight:700} .neg{color:var(--down);font-weight:700}
+.note{font-size:12px;color:var(--sub);margin-top:12px;line-height:1.7}
+footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
+@media(max-width:640px){
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .hero h1{font-size:20px}
+  .kpi .v{font-size:22px}
+}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <h1>ETF 量化信号 <span class="tag">MA{fast}/MA{slow} 金叉</span></h1>
-    <div class="date">更新于 {date}</div>
-  </header>
-
-  <div class="card">
-    <h2><span class="dot"></span>策略概览</h2>
-    <div class="grid">
-      <div class="kpi"><div class="v">{win_rate}%</div><div class="l">历史综合胜率</div></div>
-      <div class="kpi"><div class="v red">{avg_ret}%</div><div class="l">平均每笔收益</div></div>
-      <div class="kpi"><div class="v">{hold_days}天</div><div class="l">持有周期</div></div>
-      <div class="kpi"><div class="v">{n_funds}只</div><div class="l">标的数量</div></div>
+  <div class="hero">
+    <div class="top">
+      <div>
+        <h1>ETF 量化信号<span class="badge">MA{fast}/MA{slow} 金叉 · MACD 过滤</span></h1>
+        <div class="sub">支付宝 C 类 ETF 联接基金 · 买入持有 {hold_days} 天 · 每天 14:30 更新</div>
+      </div>
+      <div class="date">更新于 {date}</div>
     </div>
-    <div class="note">策略：MA{fast} 上穿 MA{slow}（金叉）买入，持有 {hold_days} 个自然日卖出；共 {trades} 笔历史交易。标的为支付宝可买、C 类、持有≥7 天免赎回费的 ETF 联接基金。</div>
+    <div class="kpis">
+      <div class="kpi"><div class="v">{win_rate}%</div><div class="l">历史综合胜率</div></div>
+      <div class="kpi"><div class="v">{avg_ret}%</div><div class="l">平均每笔收益</div></div>
+      <div class="kpi"><div class="v">{hold_days}天</div><div class="l">持有周期</div></div>
+      <div class="kpi"><div class="v">{n_funds}只</div><div class="l">精选标的</div></div>
+    </div>
   </div>
 
   <div class="card">
-    <h2><span class="dot"></span>今日信号</h2>
+    <h2><span class="dot"></span>今日信号<span class="cnt" id="sigCnt"></span></h2>
     <div id="signals"></div>
-  </div>
-
-  <div class="card">
-    <h2><span class="dot"></span>历年胜率（按买入年份）</h2>
-    <div id="yearly"></div>
-    <div class="note">虚线为 50% 胜率线；历年胜率均高于 50%，牛熊震荡市场均有效。</div>
   </div>
 
   <div class="card">
     <h2><span class="dot"></span>胜率 × 盈利率（拖动选范围）</h2>
     <div class="sliders">
-      <div class="slider-item"><label>最低胜率 <b id="winVal">55%</b></label><input type="range" id="winSlider" min="50" max="66" step="0.5" value="55"></div>
+      <div class="slider-item"><label>最低胜率 <b id="winVal">55%</b></label><input type="range" id="winSlider" min="50" max="68" step="0.5" value="55"></div>
       <div class="slider-item"><label>最低盈利率 <b id="retVal">1.0%</b></label><input type="range" id="retSlider" min="0.4" max="1.9" step="0.05" value="1.0"></div>
     </div>
     <div id="psChart"></div>
     <div class="ps-legend">
-      <span class="lg"><span class="sw" style="background:#4f46e5"></span>当前采用（持有{hold_days}天）</span>
-      <span class="lg"><span class="sw" style="background:#dc2626"></span>符合所选范围</span>
-      <span class="lg"><span class="sw" style="background:#d1d5db"></span>不符合</span>
+      <span class="lg"><span class="sw" style="background:#6366f1"></span>当前采用（持有{hold_days}天）</span>
+      <span class="lg"><span class="sw" style="background:#ef4444"></span>符合所选范围</span>
+      <span class="lg"><span class="sw" style="background:#cbd5e1"></span>不符合</span>
     </div>
     <div class="pick-note" id="pickNote"></div>
+  </div>
+
+  <div class="card">
+    <h2><span class="dot"></span>历年胜率（按买入年份）</h2>
+    <div id="yearly"></div>
+    <div class="note">金色虚线为 50% 胜率线；历年胜率均高于 50%，牛熊震荡市场均有效。</div>
   </div>
 
   <div class="card">
@@ -209,14 +218,16 @@ footer{text-align:center;color:#9ca3af;font-size:12px;margin-top:20px}
     <table id="funds"></table>
   </div>
 
-  <footer>数据来源：天天基金 · 自动更新 · 仅供研究参考，不构成投资建议</footer>
+  <footer>数据来源：天天基金 · 每日自动更新 · 仅供研究参考，不构成投资建议</footer>
 </div>
 <script>
 const DATA = __DATA__;
-const ST = {BUY:['buy','买入信号'],HOLDING:['hold','持有中'],SELL_READY:['sell','可卖出'],WAIT:['wait','等待'],ERROR:['wait','数据异常']};
+const ST = {BUY:['buy','买入信号'],HOLDING:['hold','持有中'],SELL_READY:['sell','可卖出'],WAIT:['wait','等待'],ERROR:['wait','异常']};
 function fmtRet(r){return (r>=0?'+':'')+(r*100).toFixed(2)+'%';}
-// 信号
+// 今日信号
 const sg = document.getElementById('signals');
+const buys = (DATA.signals||[]).filter(s=>s.state==='BUY');
+document.getElementById('sigCnt').textContent = buys.length? ('🟢 '+buys.length+' 只买入') : '暂无买入';
 if(!DATA.signals || !DATA.signals.length){ sg.innerHTML='<div class="empty">暂无数据</div>'; }
 else{
   let html='';
@@ -224,7 +235,7 @@ else{
     const [cls,label]=ST[s.state]||['wait',s.state];
     const r=s.ret!=null?('<span class="ret '+(s.ret>=0?'pos':'neg')+'">'+fmtRet(s.ret)+'</span>'):'';
     const extra=(s.held_days!=null?'<span class="cd">持有'+s.held_days+'天</span>':'');
-    html+='<div class="sig"><div><div class="nm">'+s.name+'</div><div class="cd">'+s.code+'</div></div><div style="display:flex;align-items:center;gap:8px">'+extra+r+'<span class="st '+cls+'">'+label+'</span></div></div>';
+    html+='<div class="sig"><div><div class="nm">'+s.name+'</div><div class="cd">'+s.code+'</div></div><div style="display:flex;align-items:center;gap:9px">'+extra+r+'<span class="st '+cls+'">'+label+'</span></div></div>';
   });
   sg.innerHTML=html;
 }
@@ -237,39 +248,41 @@ DATA.yearly.forEach(d=>{
 yr.innerHTML=yh;
 // 标的明细
 const fd = document.getElementById('funds');
-let fh='<tr><th>基金</th><th>代码</th><th>胜率</th><th>平均收益</th><th>累计收益</th><th>交易数</th></tr>';
+let fh='<tr><th>基金</th><th>代码</th><th>胜率</th><th>平均收益</th><th>累计收益</th><th>交易</th></tr>';
 DATA.funds.forEach(f=>{
   fh+='<tr><td>'+f.name+'</td><td>'+f.code+'</td><td>'+f.win_rate+'%</td><td class="'+(f.avg_ret>=0?'pos':'neg')+'">'+(f.avg_ret>=0?'+':'')+f.avg_ret+'%</td><td class="'+(f.cum_ret>=0?'pos':'neg')+'">'+(f.cum_ret>=0?'+':'')+f.cum_ret+'%</td><td>'+f.trades+'</td></tr>';
 });
 fd.innerHTML=fh;
-// 胜率-盈利率散点图（拖动阈值选范围）
+// 胜率-盈利率散点图
 const ps = document.getElementById('psChart');
-const XMIN=0.4, XMAX=1.9, YMIN=50, YMAX=66;
-const L=52, R=660, T=18, B=278;
+const XMIN=0.4, XMAX=1.9, YMIN=48, YMAX=68;
+const L=52, R=660, T=16, B=276;
 function px(v){ return L + (v-XMIN)/(XMAX-XMIN)*(R-L); }
 function py(v){ return T + (YMAX-v)/(YMAX-YMIN)*(B-T); }
 let winThr=55, retThr=1.0;
 function renderPS(){
   const curHold = DATA.strategy.hold_days;
-  let svg = '<svg class="ps-svg" viewBox="0 0 680 318">';
-  svg += '<line x1="'+L+'" y1="'+B+'" x2="'+R+'" y2="'+B+'" stroke="#e5e7eb"/>';
-  svg += '<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+B+'" stroke="#e5e7eb"/>';
+  let svg = '<svg class="ps-svg" viewBox="0 0 680 314">';
+  for(let y=YMIN; y<=YMAX+0.001; y+=5){
+    svg += '<line x1="'+L+'" y1="'+py(y)+'" x2="'+R+'" y2="'+py(y)+'" stroke="#eef1f7"/>';
+    svg += '<text x="'+(L-8)+'" y="'+(py(y)+3)+'" font-size="10" fill="#94a3b8" text-anchor="end">'+y+'%</text>';
+  }
   for(let x=XMIN; x<=XMAX+0.001; x+=0.3){
-    svg += '<text x="'+px(x)+'" y="'+(B+15)+'" font-size="10" fill="#9ca3af" text-anchor="middle">'+x.toFixed(1)+'%</text>';
+    svg += '<text x="'+px(x)+'" y="'+(B+16)+'" font-size="10" fill="#94a3b8" text-anchor="middle">'+x.toFixed(1)+'%</text>';
   }
-  for(let y=YMIN; y<=YMAX+0.001; y+=4){
-    svg += '<text x="'+(L-8)+'" y="'+(py(y)+3)+'" font-size="10" fill="#9ca3af" text-anchor="end">'+y+'%</text>';
-  }
-  svg += '<line x1="'+px(retThr)+'" y1="'+T+'" x2="'+px(retThr)+'" y2="'+B+'" stroke="#dc2626" stroke-dasharray="4,3" opacity="0.55"/>';
-  svg += '<line x1="'+L+'" y1="'+py(winThr)+'" x2="'+R+'" y2="'+py(winThr)+'" stroke="#dc2626" stroke-dasharray="4,3" opacity="0.55"/>';
+  svg += '<line x1="'+L+'" y1="'+B+'" x2="'+R+'" y2="'+B+'" stroke="#cbd5e1"/>';
+  svg += '<text x="'+((L+R)/2)+'" y="'+(B+32)+'" font-size="10" fill="#94a3b8" text-anchor="middle">平均每笔盈利率</text>';
+  svg += '<text x="14" y="'+((T+B)/2)+'" font-size="10" fill="#94a3b8" text-anchor="middle" transform="rotate(-90 14 '+((T+B)/2)+')">胜率</text>';
+  svg += '<line x1="'+px(retThr)+'" y1="'+T+'" x2="'+px(retThr)+'" y2="'+B+'" stroke="#ef4444" stroke-dasharray="5,3" opacity="0.6"/>';
+  svg += '<line x1="'+L+'" y1="'+py(winThr)+'" x2="'+R+'" y2="'+py(winThr)+'" stroke="#ef4444" stroke-dasharray="5,3" opacity="0.6"/>';
   DATA.param_space.forEach(p=>{
     const cx=px(p.avg_ret), cy=py(p.win_rate);
     const ok = p.win_rate>=winThr && p.avg_ret>=retThr;
     const isCur = p.hold_days===curHold;
-    const r = isCur?6:4;
-    const color = isCur?'#4f46e5':(ok?'#dc2626':'#d1d5db');
+    const r = isCur?6.5:4.5;
+    const color = isCur?'#6366f1':(ok?'#ef4444':'#cbd5e1');
     svg += '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+color+'"/>';
-    svg += '<text x="'+cx+'" y="'+(cy-8)+'" font-size="9" fill="#6b7280" text-anchor="middle">'+p.hold_days+'d</text>';
+    svg += '<text x="'+cx+'" y="'+(cy-9)+'" font-size="9.5" fill="#475569" text-anchor="middle" font-weight="600">'+p.hold_days+'d</text>';
   });
   svg += '</svg>';
   ps.innerHTML = svg;
@@ -278,8 +291,8 @@ function renderPS(){
   document.getElementById('retVal').textContent = retThr.toFixed(2)+'%';
   let note='';
   if(okList.length){
-    note = '符合范围（胜率≥'+winThr+'% 且 盈利率≥'+retThr.toFixed(2)+'%）的持有期：<b>'+okList.map(p=>p.hold_days+'天').join('、')+'</b>。';
-    note += okList.some(p=>p.hold_days===curHold) ? ' 当前采用的 <b>'+curHold+'天</b> 满足你的要求。' : ' 当前采用的 '+curHold+'天 不在此范围内。';
+    note = '✅ 符合范围（胜率≥'+winThr+'% 且 盈利率≥'+retThr.toFixed(2)+'%）的持有期：<b>'+okList.map(p=>p.hold_days+'天').join('、')+'</b>。';
+    note += okList.some(p=>p.hold_days===curHold) ? ' 当前采用的 <b>'+curHold+'天</b> 满足你的要求。' : ' ⚠️ 当前采用的 '+curHold+'天 不在此范围内。';
   } else {
     note = '当前筛选过严，无满足的持有期，请放宽阈值。';
   }
@@ -297,7 +310,6 @@ renderPS();
 def main():
     data = build_data()
     data["n_funds"] = len(config.POOL)
-    # 填充静态占位符
     html = (HTML
             .replace("{fast}", str(data["strategy"]["fast"]))
             .replace("{slow}", str(data["strategy"]["slow"]))
