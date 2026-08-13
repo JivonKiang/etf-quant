@@ -376,6 +376,12 @@ tr:last-child td{border-bottom:none}
 .mkpi .v{font-size:21px;font-weight:800;color:var(--brand)}
 .mkpi .v.good{color:var(--down)} .mkpi .v.bad{color:var(--up)}
 .mkpi .l{font-size:11px;color:var(--sub);margin-top:3px}
+.op-form{display:flex;gap:8px;flex-wrap:wrap}
+.op-form select,.op-form input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;flex:1;min-width:100px;background:#fff}
+.op-form button{padding:8px 16px;background:var(--brand);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer}
+.op-result{padding:12px;background:#f8fafc;border-radius:10px;font-size:13px;line-height:1.7}
+.op-result .cmd{font-weight:500;color:var(--brand)}
+.op-result button{margin-left:8px;padding:4px 12px;background:#eef2ff;color:var(--brand);border:1px solid #e0e7ff;border-radius:6px;font-size:12px;cursor:pointer}
 footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
 @media(max-width:640px){
   .kpis{grid-template-columns:repeat(2,1fr)}
@@ -412,6 +418,17 @@ footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
     <h2><span class="dot"></span>我的持仓（仅你回报的）<span class="cnt" id="posCnt"></span></h2>
     <div id="positions"></div>
     <div class="note">支付宝无公开 API，持仓需手动回报同步：在对话里告诉我「买入/卖出 基金代码 金额」，我记入持仓表并更新此页。</div>
+  </div>
+
+  <div class="card">
+    <h2><span class="dot"></span>回报今日操作</h2>
+    <div class="op-form">
+      <select id="opType"><option value="买入">买入</option><option value="卖出">卖出</option></select>
+      <input id="opCode" placeholder="基金代码，如 020640" inputmode="numeric">
+      <input id="opAmount" placeholder="金额（元）" inputmode="numeric">
+      <button id="opBtn" onclick="genReport()">生成回报指令</button>
+    </div>
+    <div id="opResult" style="display:none;margin-top:12px"></div>
   </div>
 
   <div class="card" id="simCard">
@@ -666,6 +683,24 @@ renderPS();
   });
   el.innerHTML=html;
 })();
+// 回报今日操作
+function genReport(){
+  const t = document.getElementById('opType').value;
+  const c = document.getElementById('opCode').value.trim();
+  const a = document.getElementById('opAmount').value.trim();
+  const el = document.getElementById('opResult');
+  if(!c || !a){ el.style.display='block'; el.innerHTML='<div class="op-result">请填写基金代码和金额。</div>'; return; }
+  const cmd = t + ' ' + c + ' ' + a + '元';
+  el.style.display='block';
+  el.innerHTML='<div class="op-result">回报指令：<span class="cmd" id="opCmd">' + cmd + '</span>' +
+    '<button onclick="copyCmd()">复制</button><br>' +
+    '① 回到 WorkBuddy 对话粘贴这句发送；或 ② <a href="mailto:fmmujf@163.com?subject=' + encodeURIComponent('持仓回报') + '&body=' + encodeURIComponent(cmd) + '" style="color:#6366f1">点此发邮件回报</a>。</div>';
+}
+function copyCmd(){
+  const txt = document.getElementById('opCmd').textContent;
+  if(navigator.clipboard){ navigator.clipboard.writeText(txt); }
+  else{ const ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
+}
 </script>
 </body>
 </html>
