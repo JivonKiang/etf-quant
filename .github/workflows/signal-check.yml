@@ -2,14 +2,15 @@ name: ETF Signal & Deploy
 
 on:
   schedule:
-    # UTC 18:00 = 北京时间 2:00（完整跑）
-    - cron: '0 18 * * *'
-    # UTC 18:30 = 北京时间 2:30（用最新数据再验证）
-    - cron: '30 18 * * *'
+    # UTC 6:00 = 北京时间 14:00（完整跑）
+    - cron: '0 6 * * 1-5'
+    # UTC 6:30 = 北京时间 14:30（用最新数据再验证）
+    - cron: '30 6 * * 1-5'
   workflow_dispatch: {}
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   check:
@@ -21,24 +22,49 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Run signal monitor
+      - name: Run signal monitor (SMTP email + save signals.json)
         run: python signal_monitor.py
         env:
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_SERVER: ${{ secrets.MAIL_SERVER }}
+          MAIL_PORT: ${{ secrets.MAIL_PORT }}
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
 
       - name: Build site
         run: python build_site.py
 
+      - name: Create Issue on buy signals
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const d = JSON.parse(fs.readFileSync('signals.json', 'utf8'));
+            const buys = d.filter(s => s.state === 'BUY');
+            if (buys.length > 0) {
+              const date = new Date(Date.now() + 8 * 3600 * 1000).toISOString().split('T')[0];
+              const title = `📈 ${date} ETF买入信号: ${buys.length} 只`;
+              const body = '## 📡 今日买入信号\n\n' +
+                buys.map(b => `- **${b.name}**（${b.code}）：MA10 上穿 MA30 金叉`).join('\n') +
+                `\n\n👉 [查看完整面板](https://jivonkiang.github.io/etf-quant/)\n\n---\n*由 ETF 量化系统自动创建。*`;
+              const { data } = await github.rest.search.issuesAndPullRequests({
+                q: `repo:${context.repo.owner}/${context.repo.repo} in:title "${date} ETF买入信号" type:issue`
+              });
+              if (data.total_count === 0) {
+                await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body });
+                console.log('Issue created: ' + title);
+              }
+            } else {
+              console.log('No buy signals today.');
+            }
+
       - name: Deploy to gh-pages
         run: |
           mkdir -p /tmp/pages
           cp index.html /tmp/pages/
+          cp signals.json /tmp/pages/ 2>/dev/null || true
           cd /tmp/pages
           git init -b gh-pages
-          git add index.html
+          git add .
           git -c user.name=github-actions -c user.email=actions@github.com commit -m "update site $(date -u +%F-%H%M)" || true
           git push -f https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git gh-pages
