@@ -210,6 +210,45 @@ def send_mail(subject, body, html=False):
     return True
 
 
+def load_positions():
+    path = os.path.join(os.path.dirname(__file__), "positions.json")
+    if os.path.exists(path):
+        try:
+            return json.load(open(path, encoding="utf-8"))
+        except Exception:
+            return []
+    return []
+
+
+def build_daily_report(rows):
+    """生成每日建议邮件（含信号 + 持仓状态），无买入信号时也发"""
+    f, s, hd = config.STRATEGY["fast"], config.STRATEGY["slow"], config.STRATEGY["hold_days"]
+    buys = [r for r in rows if r["state"] == "BUY"]
+    lines = ["【ETF 每日建议】%s" % NOW, ""]
+    if buys:
+        lines.append("今日买入信号：")
+        for b in buys:
+            lines.append("- %s（%s）：MA%d/MA%d 金叉，建议买入持有 %d 天" % (b["name"], b["code"], f, s, hd))
+    else:
+        lines.append("今日无买入信号（7 只标的均为观望/持有）。")
+    lines.append("")
+    pos = load_positions()
+    if pos:
+        lines.append("你的持仓：")
+        for p in pos:
+            try:
+                arr = fetch(p["code"])
+                cur = arr[-1]["nav"]
+                ret = cur / p["buy_nav"] - 1
+                held = (datetime.date.today() - datetime.date.fromisoformat(p["buy_date"])).days
+                lines.append("- %s（%s）：%+.2f%%（持有 %d 天）" % (p["name"], p["code"], ret * 100, held))
+            except Exception:
+                lines.append("- %s（%s）：数据获取失败" % (p["name"], p["code"]))
+    lines.append("")
+    lines.append("查看面板 / 回报操作：https://jivonkiang.github.io/etf-quant/")
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     rows = check_all()
     out_json = os.path.join(os.path.dirname(__file__), "signals.json")
@@ -219,7 +258,11 @@ if __name__ == "__main__":
     else:
         print(render_markdown(rows))
     buys = [r for r in rows if r["state"] == "BUY"]
-    if buys and config.EMAIL_ENABLED:
-        body = build_email_html(rows)
-        ok = send_mail(f"📈 ETF买入信号 {NOW}：" + "、".join(r["name"] for r in buys), body, html=True)
+    if config.EMAIL_ENABLED:
+        if buys:
+            body = build_email_html(rows)
+            ok = send_mail(f"📈 ETF买入信号 {NOW}：" + "、".join(r["name"] for r in buys), body, html=True)
+        else:
+            body = build_daily_report(rows)
+            ok = send_mail(f"📊 ETF每日建议 {NOW}（无买入信号）", body)
         print("\n[邮件通知]" + ("已发送" if ok else "未配置 SMTP，跳过"))
