@@ -3,7 +3,7 @@
 卖出：止盈+15% / 止损-8% / 收盘跌破MA20
 加仓：收盘突破MA30 / 回踩MA20不破且MACD红柱
 """
-import json, os, datetime
+import json, os, datetime, sys
 import config
 import signal_monitor as SM
 
@@ -97,6 +97,6 @@ def send_alerts(alerts):
 if __name__ == "__main__":
     alerts = check_position_signals()
     print(render_report(alerts))
-    if alerts:
+    if alerts and "--no-mail" not in sys.argv:
         ok = send_alerts(alerts)
         print("\n[邮件]" + ("已发送" if ok else "未配置 SMTP，跳过"))
