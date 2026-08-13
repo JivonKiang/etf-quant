@@ -53,19 +53,37 @@ def ma(prices, n):
     return out
 
 
+def ema(vals, n):
+    k = 2 / (n + 1)
+    out = [vals[0]]
+    for v in vals[1:]:
+        out.append(out[-1] + k * (v - out[-1]))
+    return out
+
+
+def macd_hist(nav):
+    """MACD 柱状图 = 2*(DIF - DEA)，DIF=EMA12-EMA26，DEA=EMA9(DIF)"""
+    e12 = ema(nav, 12)
+    e26 = ema(nav, 26)
+    dif = [e12[i] - e26[i] for i in range(len(nav))]
+    dea = ema(dif, 9)
+    return [2 * (dif[i] - dea[i]) for i in range(len(nav))]
+
+
 def state_of(arr):
     """返回 (state, detail)，state: BUY/HOLDING/SELL_READY/WAIT
-    固定持有 hold_days 天：金叉买入 -> 持有 -> 满期卖出 -> 空仓等下一次金叉"""
+    金叉(MA10上穿MA30) + MACD柱>0 买入 -> 持有 -> 满期卖出 -> 空仓等下一次"""
     nav = [a["nav"] for a in arr]
     dates = [a["date"] for a in arr]
     mf = ma(nav, config.STRATEGY["fast"])
     ms = ma(nav, config.STRATEGY["slow"])
+    hist = macd_hist(nav)
     slow = config.STRATEGY["slow"]
     buy_idx = None
     for i in range(len(nav) - 1, slow - 1, -1):
         if mf[i] is None or ms[i] is None or mf[i - 1] is None or ms[i - 1] is None:
             continue
-        if mf[i - 1] <= ms[i - 1] and mf[i] > ms[i]:
+        if mf[i - 1] <= ms[i - 1] and mf[i] > ms[i] and hist[i] > 0:
             buy_idx = i
             break
     if buy_idx is None:
@@ -122,11 +140,47 @@ def render_markdown(rows):
         L.append("")
     if not (buy or hold or sell):
         L.append("今日无买入信号，也无持仓。")
-    L += ["", f"> 策略：MA{config.STRATEGY['fast']}/MA{config.STRATEGY['slow']} 金叉买入，持有 {config.STRATEGY['hold_days']} 天卖出；历史综合胜率 63.1%。"]
+    L += ["", f"> 策略：MA{config.STRATEGY['fast']}/MA{config.STRATEGY['slow']} 金叉 + MACD 柱>0 买入，持有 {config.STRATEGY['hold_days']} 天卖出；历史综合胜率 66.1%。"]
     return "\n".join(L)
 
 
-def send_mail(subject, body):
+def build_email_html(rows):
+    """生成买入信号邮件的 HTML 正文"""
+    f, s, hd = config.STRATEGY["fast"], config.STRATEGY["slow"], config.STRATEGY["hold_days"]
+    buys = [r for r in rows if r["state"] == "BUY"]
+    holds = [r for r in rows if r["state"] == "HOLDING"]
+    cards = ""
+    for r in buys:
+        cards += ('<div style="border:1px solid #e6e8ef;border-left:4px solid #ef4444;border-radius:10px;'
+                  'padding:14px;margin-bottom:10px;background:#fff;">'
+                  '<div style="font-size:15px;font-weight:700;color:#1e293b;">%s</div>'
+                  '<div style="font-size:12px;color:#64748b;margin-top:4px;">代码 %s · 建议买入持有 %d 天 · C类≥7天免赎回费</div>'
+                  '</div>') % (r["name"], r["code"], hd)
+    for r in holds:
+        cards += ('<div style="border:1px solid #e6e8ef;border-left:4px solid #2563eb;border-radius:10px;'
+                  'padding:14px;margin-bottom:10px;background:#fff;">'
+                  '<div style="font-size:15px;font-weight:700;color:#1e293b;">%s</div>'
+                  '<div style="font-size:12px;color:#64748b;margin-top:4px;">代码 %s · 持有第 %d 天 · 收益 %+.2f%%</div>'
+                  '</div>') % (r["name"], r["code"], r["held_days"], r["ret"] * 100)
+    html = ('<div style="background:#eef1f7;padding:24px;font-family:-apple-system,\'PingFang SC\',\'Microsoft YaHei\',sans-serif;">'
+            '<div style="max-width:600px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(15,23,42,.08);">'
+            '<div style="background:linear-gradient(135deg,#1e1b4b,#4f46e5,#7c3aed);padding:24px 22px;color:#fff;">'
+            '<div style="font-size:19px;font-weight:800;">&#128200; ETF 买入信号</div>'
+            '<div style="font-size:13px;opacity:.85;margin-top:6px;">%s · MA%d/MA%d 金叉 + MACD 过滤 · 持有 %d 天</div></div>'
+            '<div style="padding:20px 22px;">'
+            '<div style="font-size:13px;color:#64748b;margin-bottom:12px;">今日 %d 只标的出现买入信号：</div>'
+            '%s'
+            '<div style="margin-top:14px;padding:12px 14px;background:#f8fafc;border-radius:10px;font-size:12.5px;color:#475569;line-height:1.7;">'
+            '&#128161; <b>操作建议</b>：支付宝搜索对应代码，今日 15:00 前买入按当日净值确认；持有满 %d 天再考虑卖出。<br>'
+            '&#128202; <b>策略依据</b>：历史综合胜率 66.1%%，平均每笔 +1.48%%，历年 54%%~79%%。</div></div>'
+            '<div style="padding:14px 22px;background:#f8fafc;font-size:11px;color:#94a3b8;line-height:1.6;">'
+            '本邮件由 ETF 量化系统自动发送 · 数据来源：天天基金 · 仅供研究参考，不构成投资建议 '
+            '<a href="https://jivonkiang.github.io/etf-quant/" style="color:#6366f1;">查看完整面板 &rarr;</a></div>'
+            '</div></div>') % (NOW, f, s, hd, len(buys), cards, hd)
+    return html
+
+
+def send_mail(subject, body, html=False):
     import smtplib
     from email.mime.text import MIMEText
     host = os.environ.get("MAIL_SERVER")
@@ -136,7 +190,7 @@ def send_mail(subject, body):
     user = os.environ.get("MAIL_USERNAME", "")
     pwd = os.environ.get("MAIL_PASSWORD", "")
     to = os.environ.get("MAIL_TO", user)
-    msg = MIMEText(body, "plain", "utf-8")
+    msg = MIMEText(body, "html" if html else "plain", "utf-8")
     msg["Subject"] = subject
     msg["From"] = user
     msg["To"] = to
@@ -161,6 +215,6 @@ if __name__ == "__main__":
         print(render_markdown(rows))
     buys = [r for r in rows if r["state"] == "BUY"]
     if buys and config.EMAIL_ENABLED:
-        body = render_markdown(rows)
-        ok = send_mail(f"ETF买入信号 {NOW}：" + "、".join(r["name"] for r in buys), body)
+        body = build_email_html(rows)
+        ok = send_mail(f"📈 ETF买入信号 {NOW}：" + "、".join(r["name"] for r in buys), body, html=True)
         print("\n[邮件通知]" + ("已发送" if ok else "未配置 SMTP，跳过"))
