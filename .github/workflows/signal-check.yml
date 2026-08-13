@@ -31,6 +31,15 @@ jobs:
           MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
 
+      - name: Check position signals (sell/add alerts)
+        run: python position_alert.py
+        env:
+          MAIL_SERVER: ${{ secrets.MAIL_SERVER }}
+          MAIL_PORT: ${{ secrets.MAIL_PORT }}
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+
       - name: Build site
         run: python build_site.py
 
