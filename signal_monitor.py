@@ -99,10 +99,10 @@ def state_of(arr):
     if bd == latest_date:
         return "BUY", detail                      # 最新净值日刚金叉 -> 买入
     tp = config.STRATEGY.get("take_profit")
-    if tp and detail["ret"] >= tp:
-        detail["reason"] = "止盈"
-        return "SELL_READY", detail               # 达到止盈线 -> 卖出
     if held < config.STRATEGY["hold_days"]:
+        if tp and detail["ret"] >= tp:
+            detail["reason"] = "止盈"
+            return "SELL_READY", detail           # 持有期内达到止盈线 -> 卖出
         return "HOLDING", detail                  # 持有中
     if held == config.STRATEGY["hold_days"]:
         detail["reason"] = "满期"
