@@ -8,8 +8,8 @@ import signal_monitor
 import etf_backtest as BT
 
 
-def fixed_hold_backtest(arr, fast, slow, hold_days):
-    """固定持有 N 天回测：金叉(MA上穿) + MACD柱>0 买入，持有满 N 天卖出"""
+def fixed_hold_backtest(arr, fast, slow, hold_days, take_profit=None):
+    """固定持有 N 天回测：金叉(MA上穿) + MACD柱>0 买入，止盈或满 N 天卖出"""
     dates = [a["date"] for a in arr]
     nav = [a["nav"] for a in arr]
     mf = BT.ma(nav, fast)
@@ -27,8 +27,10 @@ def fixed_hold_backtest(arr, fast, slow, hold_days):
         else:
             d0 = datetime.date.fromisoformat(pos["bd"])
             d1 = datetime.date.fromisoformat(dates[i])
-            if (d1 - d0).days >= hold_days:
-                trades.append({"ret": nav[i] / pos["bn"] - 1, "bd": pos["bd"],
+            ret = nav[i] / pos["bn"] - 1
+            sell = (take_profit is not None and ret >= take_profit) or (d1 - d0).days >= hold_days
+            if sell:
+                trades.append({"ret": ret, "bd": pos["bd"],
                                "sd": dates[i], "hold": (d1 - d0).days})
                 pos = None
     return trades
@@ -58,7 +60,9 @@ def build_equity(sample=240):
                 holding[i] = True
                 d0 = datetime.date.fromisoformat(dates[pos_start])
                 d1 = datetime.date.fromisoformat(dates[i])
-                if (d1 - d0).days >= config.STRATEGY["hold_days"]:
+                ret = nav[i] / nav[pos_start] - 1
+                tp = config.STRATEGY.get("take_profit")
+                if (tp and ret >= tp) or (d1 - d0).days >= config.STRATEGY["hold_days"]:
                     pos_start = None
         ret = {}
         for i in range(1, len(nav)):
@@ -144,7 +148,9 @@ def calc_metrics(equity, benchmark, trades):
     }
 
 
-def build_signal_analysis(signals, look_forward=20):
+def build_signal_analysis(signals, look_forward=None):
+    if look_forward is None:
+        look_forward = config.STRATEGY["hold_days"]
     """对当前有信号(BUY/HOLDING)的基金，提取历史所有买入信号后 N 交易日走势"""
     result = []
     active = [s for s in signals if s["state"] in ("BUY", "HOLDING")]
@@ -190,13 +196,14 @@ def build_signal_analysis(signals, look_forward=20):
 
 def build_data():
     f, s, hd = (config.STRATEGY["fast"], config.STRATEGY["slow"], config.STRATEGY["hold_days"])
+    tp = config.STRATEGY.get("take_profit")
     signals = signal_monitor.check_all()
     all_trades = []
     fund_detail = []
     yearly = {}
     for code, name in config.POOL.items():
         arr = [a for a in signal_monitor.fetch(code) if a["date"] >= "2020-01-01"]
-        tr = fixed_hold_backtest(arr, f, s, hd)
+        tr = fixed_hold_backtest(arr, f, s, hd, tp)
         all_trades += tr
         n = len(tr)
         if n:
@@ -223,7 +230,7 @@ def build_data():
         pts = []
         for code in config.POOL:
             arr = [a for a in signal_monitor.fetch(code) if a["date"] >= "2020-01-01"]
-            pts += fixed_hold_backtest(arr, f, s, hold_days)
+            pts += fixed_hold_backtest(arr, f, s, hold_days, tp)
         if pts:
             pw = sum(1 for t in pts if t["ret"] > 0)
             param_space.append({
@@ -361,7 +368,7 @@ footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
   <div class="card" id="simCard">
     <h2><span class="dot"></span>相似K线 · 历史信号走势回放</h2>
     <div id="signalSim"></div>
-    <div class="note">展示当前有信号标的在历史上每次出现同样买入信号后 20 个交易日的走势，用于判断本次信号的胜率预期。</div>
+    <div class="note">展示当前有信号标的在历史上每次出现同样买入信号后 {hold_days} 个交易日的走势，用于判断本次信号的胜率预期。</div>
   </div>
 
   <div class="card">
@@ -569,9 +576,9 @@ renderPS();
     svg+='<text x="'+((L+W-R)/2)+'" y="'+(H-4)+'" font-size="9" fill="#94a3b8" text-anchor="middle">买入后交易日</text>';
     svg+='</svg>';
     html+='<div style="margin-bottom:20px">';
-    html+='<div style="font-size:14px;font-weight:700;margin-bottom:6px">'+item.name+'<span class="cnt" style="margin-left:8px">历史 '+item.n_signals+' 次信号 · 20天后胜率 '+item.win_rate+'%</span></div>';
+    html+='<div style="font-size:14px;font-weight:700;margin-bottom:6px">'+item.name+'<span class="cnt" style="margin-left:8px">历史 '+item.n_signals+' 次信号 · '+DATA.strategy.hold_days+'天后胜率 '+item.win_rate+'%</span></div>';
     html+=svg;
-    html+='<div style="font-size:12px;color:#64748b;margin-top:6px">红粗线=历史平均走势，灰线=各次实际走势；买入后 20 个交易日平均收益 '+item.avg_final+'%，胜率 '+item.win_rate+'%。</div>';
+    html+='<div style="font-size:12px;color:#64748b;margin-top:6px">红粗线=历史平均走势，灰线=各次实际走势；买入后 '+DATA.strategy.hold_days+' 个交易日平均收益 '+item.avg_final+'%，胜率 '+item.win_rate+'%。</div>';
     html+='</div>';
   });
   el.innerHTML=html;
