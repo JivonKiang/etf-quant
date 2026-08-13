@@ -34,6 +34,95 @@ def fixed_hold_backtest(arr, fast, slow, hold_days):
     return trades
 
 
+def build_equity(sample=240):
+    """等权组合策略资金曲线（金叉+MACD买入持有N天，空仓现金）"""
+    fund_ret = {}
+    all_dates = set()
+    for code in config.POOL:
+        arr = [a for a in signal_monitor.fetch(code) if a["date"] >= "2020-01-01"]
+        nav = [a["nav"] for a in arr]
+        dates = [a["date"] for a in arr]
+        mf = BT.ma(nav, config.STRATEGY["fast"])
+        ms = BT.ma(nav, config.STRATEGY["slow"])
+        hist = signal_monitor.macd_hist(nav)
+        holding = [False] * len(nav)
+        pos_start = None
+        slow = config.STRATEGY["slow"]
+        for i in range(slow, len(nav)):
+            if mf[i] is None or ms[i] is None or mf[i - 1] is None or ms[i - 1] is None:
+                continue
+            cross = mf[i - 1] <= ms[i - 1] and mf[i] > ms[i] and hist[i] > 0
+            if pos_start is None and cross:
+                pos_start = i
+            if pos_start is not None:
+                holding[i] = True
+                d0 = datetime.date.fromisoformat(dates[pos_start])
+                d1 = datetime.date.fromisoformat(dates[i])
+                if (d1 - d0).days >= config.STRATEGY["hold_days"]:
+                    pos_start = None
+        ret = {}
+        for i in range(1, len(nav)):
+            ret[dates[i]] = (nav[i] / nav[i - 1] - 1) if holding[i] else 0.0
+        fund_ret[code] = ret
+        all_dates.update(dates)
+    ds = sorted(all_dates)
+    nav_val = 1.0
+    equity = []
+    for d in ds:
+        rs = [fund_ret[c].get(d, 0.0) for c in config.POOL]
+        nav_val *= (1 + sum(rs) / len(rs))
+        equity.append([d, round(nav_val, 4)])
+    if len(equity) > sample:
+        step = len(equity) / sample
+        equity = [equity[int(i * step)] for i in range(sample)]
+        equity.append([ds[-1], round(nav_val, 4)])
+    return equity
+
+
+def build_signal_analysis(signals, look_forward=20):
+    """对当前有信号(BUY/HOLDING)的基金，提取历史所有买入信号后 N 交易日走势"""
+    result = []
+    active = [s for s in signals if s["state"] in ("BUY", "HOLDING")]
+    for s in active:
+        code = s["code"]
+        arr = [a for a in signal_monitor.fetch(code) if a["date"] >= "2020-01-01"]
+        nav = [a["nav"] for a in arr]
+        dates = [a["date"] for a in arr]
+        mf = BT.ma(nav, config.STRATEGY["fast"])
+        ms = BT.ma(nav, config.STRATEGY["slow"])
+        hist = signal_monitor.macd_hist(nav)
+        samples = []
+        slow = config.STRATEGY["slow"]
+        for i in range(slow, len(nav)):
+            if mf[i] is None or ms[i] is None or mf[i - 1] is None or ms[i - 1] is None:
+                continue
+            cross = mf[i - 1] <= ms[i - 1] and mf[i] > ms[i] and hist[i] > 0
+            if not cross:
+                continue
+            path = []
+            for j in range(i + 1, min(i + 1 + look_forward, len(nav))):
+                path.append(round(nav[j] / nav[i] - 1, 4))
+            if len(path) >= 5:
+                samples.append({"buy_date": dates[i], "final": path[-1], "path": path})
+        if not samples:
+            continue
+        wins = sum(1 for x in samples if x["final"] > 0)
+        avg_path = []
+        for k in range(look_forward):
+            rs = [x["path"][k] for x in samples if k < len(x["path"])]
+            if rs:
+                avg_path.append(round(sum(rs) / len(rs) * 100, 2))
+        result.append({
+            "code": code, "name": s["name"], "state": s["state"],
+            "n_signals": len(samples),
+            "win_rate": round(wins / len(samples) * 100, 0),
+            "avg_final": round(sum(x["final"] for x in samples) / len(samples) * 100, 2),
+            "avg_path": avg_path,
+            "samples": [[round(r * 100, 2) for r in x["path"]] for x in samples],
+        })
+    return result
+
+
 def build_data():
     f, s, hd = (config.STRATEGY["fast"], config.STRATEGY["slow"], config.STRATEGY["hold_days"])
     signals = signal_monitor.check_all()
@@ -88,6 +177,8 @@ def build_data():
         "yearly": yearly_sorted,
         "funds": fund_detail,
         "param_space": param_space,
+        "equity": build_equity(),
+        "signal_analysis": build_signal_analysis(signals),
     }
 
 
@@ -192,6 +283,18 @@ footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
     <div id="signals"></div>
   </div>
 
+  <div class="card" id="simCard">
+    <h2><span class="dot"></span>相似K线 · 历史信号走势回放</h2>
+    <div id="signalSim"></div>
+    <div class="note">展示当前有信号标的在历史上每次出现同样买入信号后 20 个交易日的走势，用于判断本次信号的胜率预期。</div>
+  </div>
+
+  <div class="card">
+    <h2><span class="dot"></span>回测资金曲线</h2>
+    <div id="equityChart"></div>
+    <div class="note">7 只标的等权组合，按策略信号买入持有、空仓持币的累计净值（2020 年至今）。</div>
+  </div>
+
   <div class="card">
     <h2><span class="dot"></span>胜率 × 盈利率（拖动选范围）</h2>
     <div class="sliders">
@@ -234,7 +337,10 @@ else{
   DATA.signals.forEach(s=>{
     const [cls,label]=ST[s.state]||['wait',s.state];
     const r=s.ret!=null?('<span class="ret '+(s.ret>=0?'pos':'neg')+'">'+fmtRet(s.ret)+'</span>'):'';
-    const extra=(s.held_days!=null?'<span class="cd">持有'+s.held_days+'天</span>':'');
+    let extra='';
+    if(s.state==='HOLDING') extra='<span class="cd">持有第'+s.held_days+'天 · 还差'+(DATA.strategy.hold_days-s.held_days)+'天卖出</span>';
+    else if(s.state==='SELL_READY') extra='<span class="cd">已到持有期 · 可卖出</span>';
+    else if(s.state==='BUY') extra='<span class="cd">建议持有'+DATA.strategy.hold_days+'天后卖出</span>';
     html+='<div class="sig"><div><div class="nm">'+s.name+'</div><div class="cd">'+s.code+'</div></div><div style="display:flex;align-items:center;gap:9px">'+extra+r+'<span class="st '+cls+'">'+label+'</span></div></div>';
   });
   sg.innerHTML=html;
@@ -301,6 +407,67 @@ function renderPS(){
 document.getElementById('winSlider').addEventListener('input', e=>{winThr=parseFloat(e.target.value); renderPS();});
 document.getElementById('retSlider').addEventListener('input', e=>{retThr=parseFloat(e.target.value); renderPS();});
 renderPS();
+// 资金曲线
+(function(){
+  const el = document.getElementById('equityChart');
+  const eq = DATA.equity || [];
+  if(!eq.length){ el.innerHTML='<div class="empty">暂无数据</div>'; return; }
+  const W=680, H=240, L=44, R=14, T=14, B=30;
+  const navs = eq.map(x=>x[1]);
+  const min=Math.min(1, ...navs), max=Math.max(...navs);
+  function px(i){ return L + i/(eq.length-1)*(W-L-R); }
+  function py(v){ return T + (max-v)/(max-min)*(H-T-B); }
+  let svg='<svg class="ps-svg" viewBox="0 0 '+W+' '+H+'">';
+  for(let v=min; v<=max+1e-9; v+=(max-min)/4){
+    svg+='<line x1="'+L+'" y1="'+py(v)+'" x2="'+(W-R)+'" y2="'+py(v)+'" stroke="#eef1f7"/>';
+    svg+='<text x="'+(L-6)+'" y="'+(py(v)+3)+'" font-size="9" fill="#94a3b8" text-anchor="end">'+v.toFixed(2)+'</text>';
+  }
+  svg+='<line x1="'+L+'" y1="'+py(1)+'" x2="'+(W-R)+'" y2="'+py(1)+'" stroke="#f59e0b" stroke-dasharray="4,3"/>';
+  let d='';
+  eq.forEach((x,i)=>{ d += (i?'L':'M')+px(i).toFixed(1)+' '+py(x[1]).toFixed(1); });
+  svg+='<path d="'+d+' L'+(W-R)+' '+py(min)+' L'+L+' '+py(min)+' Z" fill="rgba(99,102,241,.08)"/>';
+  svg+='<path d="'+d+'" fill="none" stroke="#6366f1" stroke-width="2"/>';
+  const idx=[0, Math.floor((eq.length-1)/2), eq.length-1];
+  idx.forEach(i=>{ svg+='<text x="'+px(i)+'" y="'+(H-6)+'" font-size="9" fill="#94a3b8" text-anchor="middle">'+eq[i][0]+'</text>'; });
+  svg+='</svg>';
+  el.innerHTML=svg;
+})();
+// 相似K线历史走势
+(function(){
+  const el = document.getElementById('signalSim');
+  const sa = DATA.signal_analysis || [];
+  const card = document.getElementById('simCard');
+  if(!sa.length){ card.style.display='none'; return; }
+  card.style.display='block';
+  const W=680, H=210, L=44, R=14, T=14, B=26;
+  let html='';
+  sa.forEach(item=>{
+    const allv = item.avg_path.concat(...item.samples);
+    const maxv = Math.max(1, ...allv), minv = Math.min(-1, ...allv);
+    function px(i){ return L + i/(item.avg_path.length-1)*(W-L-R); }
+    function py(v){ return T + (maxv-v)/(maxv-minv)*(H-T-B); }
+    let svg='<svg class="ps-svg" viewBox="0 0 '+W+' '+H+'" style="margin-bottom:6px">';
+    svg+='<line x1="'+L+'" y1="'+py(0)+'" x2="'+(W-R)+'" y2="'+py(0)+'" stroke="#f59e0b" stroke-dasharray="4,3"/>';
+    item.samples.forEach(sp=>{
+      let d='';
+      sp.forEach((v,i)=>{ d+=(i?'L':'M')+px(i).toFixed(1)+' '+py(v).toFixed(1); });
+      svg+='<path d="'+d+'" fill="none" stroke="#cbd5e1" stroke-width="0.7" opacity="0.75"/>';
+    });
+    let d2='';
+    item.avg_path.forEach((v,i)=>{ d2+=(i?'L':'M')+px(i).toFixed(1)+' '+py(v).toFixed(1); });
+    svg+='<path d="'+d2+'" fill="none" stroke="#ef4444" stroke-width="2.5"/>';
+    svg+='<text x="'+(L-6)+'" y="'+(py(0)+3)+'" font-size="9" fill="#94a3b8" text-anchor="end">0%</text>';
+    svg+='<text x="'+(L-6)+'" y="'+(py(maxv)+3)+'" font-size="9" fill="#94a3b8" text-anchor="end">'+maxv.toFixed(0)+'%</text>';
+    svg+='<text x="'+((L+W-R)/2)+'" y="'+(H-4)+'" font-size="9" fill="#94a3b8" text-anchor="middle">买入后交易日</text>';
+    svg+='</svg>';
+    html+='<div style="margin-bottom:20px">';
+    html+='<div style="font-size:14px;font-weight:700;margin-bottom:6px">'+item.name+'<span class="cnt" style="margin-left:8px">历史 '+item.n_signals+' 次信号 · 20天后胜率 '+item.win_rate+'%</span></div>';
+    html+=svg;
+    html+='<div style="font-size:12px;color:#64748b;margin-top:6px">红粗线=历史平均走势，灰线=各次实际走势；买入后 20 个交易日平均收益 '+item.avg_final+'%，胜率 '+item.win_rate+'%。</div>';
+    html+='</div>';
+  });
+  el.innerHTML=html;
+})();
 </script>
 </body>
 </html>
