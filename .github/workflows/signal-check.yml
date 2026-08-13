@@ -2,9 +2,9 @@ name: ETF Signal & Deploy
 
 on:
   schedule:
-    # UTC 6:00 = 北京时间 14:00（完整跑，准备数据）
+    # UTC 6:00 = 北京时间 14:00（拉数据 + 更新页面，不发邮件）
     - cron: '0 6 * * 1-5'
-    # UTC 6:45 = 北京时间 14:45（发建议，3点收盘前15分钟）
+    # UTC 6:45 = 北京时间 14:45（发建议邮件，3点收盘前15分钟）
     - cron: '45 6 * * 1-5'
   workflow_dispatch: {}
 
@@ -22,8 +22,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Run signal monitor (SMTP email + save signals.json)
-        run: python signal_monitor.py
+      # 14:00 档不发邮件（只更新数据+页面）；14:45 档（或手动触发）发建议邮件
+      - name: Run signal monitor (SMTP email)
+        run: |
+          if [ "${{ github.event.schedule }}" = "0 6 * * 1-5" ]; then
+            echo "14:00 档：只更新数据，跳过邮件"
+            python signal_monitor.py --no-mail
+          else
+            echo "14:45 档：发送建议邮件"
+            python signal_monitor.py
+          fi
         env:
           MAIL_SERVER: ${{ secrets.MAIL_SERVER }}
           MAIL_PORT: ${{ secrets.MAIL_PORT }}
@@ -32,7 +40,14 @@ jobs:
           MAIL_TO: ${{ secrets.MAIL_TO }}
 
       - name: Check position signals (sell/add alerts)
-        run: python position_alert.py
+        run: |
+          if [ "${{ github.event.schedule }}" = "0 6 * * 1-5" ]; then
+            echo "14:00 档：只检测，跳过邮件"
+            python position_alert.py --no-mail
+          else
+            echo "14:45 档：有提醒则发邮件"
+            python position_alert.py
+          fi
         env:
           MAIL_SERVER: ${{ secrets.MAIL_SERVER }}
           MAIL_PORT: ${{ secrets.MAIL_PORT }}
