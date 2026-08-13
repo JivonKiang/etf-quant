@@ -194,6 +194,33 @@ def build_signal_analysis(signals, look_forward=None):
     return result
 
 
+def load_positions():
+    path = os.path.join(os.path.dirname(__file__), "positions.json")
+    if os.path.exists(path):
+        try:
+            return json.load(open(path, encoding="utf-8"))
+        except Exception:
+            return []
+    return []
+
+
+def build_positions():
+    """计算实际持仓的当前盈亏与状态"""
+    result = []
+    for p in load_positions():
+        try:
+            arr = signal_monitor.fetch(p["code"])
+        except Exception:
+            continue
+        latest_nav = arr[-1]["nav"]
+        latest_date = arr[-1]["date"]
+        ret = latest_nav / p["buy_nav"] - 1
+        held = (datetime.date.today() - datetime.date.fromisoformat(p["buy_date"])).days
+        result.append({**p, "latest_nav": round(latest_nav, 4),
+                       "ret": round(ret, 4), "held_days": held, "latest_date": latest_date})
+    return result
+
+
 def build_data():
     f, s, hd = (config.STRATEGY["fast"], config.STRATEGY["slow"], config.STRATEGY["hold_days"])
     tp = config.STRATEGY.get("take_profit")
@@ -204,6 +231,9 @@ def build_data():
     for code, name in config.POOL.items():
         arr = [a for a in signal_monitor.fetch(code) if a["date"] >= "2020-01-01"]
         tr = fixed_hold_backtest(arr, f, s, hd, tp)
+        for t in tr:
+            t["name"] = name
+            t["code"] = code
         all_trades += tr
         n = len(tr)
         if n:
@@ -244,6 +274,11 @@ def build_data():
     benchmark = build_benchmark()
     metrics = calc_metrics(equity_full, benchmark, all_trades)
 
+    recent_trades = sorted(all_trades, key=lambda t: t["sd"], reverse=True)[:15]
+    recent_trades = [{"name": t["name"], "code": t["code"], "buy_date": t["bd"],
+                      "sell_date": t["sd"], "ret": round(t["ret"] * 100, 2),
+                      "hold": t["hold"]} for t in recent_trades]
+
     return {
         "date": str(datetime.date.today()),
         "strategy": {"fast": f, "slow": s, "hold_days": hd},
@@ -257,6 +292,8 @@ def build_data():
         "benchmark": benchmark,
         "metrics": metrics,
         "signal_analysis": build_signal_analysis(signals),
+        "positions": build_positions(),
+        "recent_trades": recent_trades,
     }
 
 
@@ -365,6 +402,12 @@ footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
     <div id="signals"></div>
   </div>
 
+  <div class="card">
+    <h2><span class="dot"></span>我的持仓<span class="cnt" id="posCnt"></span></h2>
+    <div id="positions"></div>
+    <div class="note">支付宝无公开 API，持仓需手动回报同步：在对话里告诉我「买入/卖出 基金代码 金额」，我记入持仓表并更新此页。</div>
+  </div>
+
   <div class="card" id="simCard">
     <h2><span class="dot"></span>相似K线 · 历史信号走势回放</h2>
     <div id="signalSim"></div>
@@ -409,6 +452,11 @@ footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
   </div>
 
   <div class="card">
+    <h2><span class="dot"></span>最近交易明细（回测）</h2>
+    <table id="trades"></table>
+  </div>
+
+  <div class="card">
     <h2><span class="dot"></span>标的池明细</h2>
     <table id="funds"></table>
   </div>
@@ -437,6 +485,24 @@ else{
   });
   sg.innerHTML=html;
 }
+// 我的持仓
+(function(){
+  const el = document.getElementById('positions');
+  const pos = DATA.positions || [];
+  document.getElementById('posCnt').textContent = pos.length ? pos.length+' 只' : '暂无';
+  if(!pos.length){ el.innerHTML='<div class="empty">暂无持仓记录。在对话中告诉我「买入 006479 2000元」即可录入。</div>'; return; }
+  const sigMap = {};
+  (DATA.signals||[]).forEach(s=>{ sigMap[s.code]=s.state; });
+  let h='<table><tr><th>基金</th><th>买入日</th><th>金额</th><th>成本净值</th><th>现净值</th><th>盈亏</th><th>持有</th><th>操作</th></tr>';
+  pos.forEach(p=>{
+    const st = sigMap[p.code] || '';
+    const op = (st==='SELL_READY'||st==='BUY') ? '<span class="st sell">该卖出</span>' : (st==='HOLDING'?'<span class="st hold">持有中</span>':'<span class="st wait">等待</span>');
+    const ret = p.ret!=null ? ('<span class="'+(p.ret>=0?'pos':'neg')+'">'+fmtRet(p.ret)+'</span>') : '';
+    h+='<tr><td>'+p.name+'</td><td>'+p.buy_date+'</td><td>¥'+p.amount+'</td><td>'+p.buy_nav+'</td><td>'+p.latest_nav+'</td><td>'+ret+'</td><td>'+p.held_days+'天</td><td>'+op+'</td></tr>';
+  });
+  h+='</table>';
+  el.innerHTML=h;
+})();
 // 历年胜率
 const yr = document.getElementById('yearly');
 let yh='';
@@ -451,6 +517,17 @@ DATA.funds.forEach(f=>{
   fh+='<tr><td>'+f.name+'</td><td>'+f.code+'</td><td>'+f.win_rate+'%</td><td class="'+(f.avg_ret>=0?'pos':'neg')+'">'+(f.avg_ret>=0?'+':'')+f.avg_ret+'%</td><td class="'+(f.cum_ret>=0?'pos':'neg')+'">'+(f.cum_ret>=0?'+':'')+f.cum_ret+'%</td><td>'+f.trades+'</td></tr>';
 });
 fd.innerHTML=fh;
+// 最近交易明细
+(function(){
+  const el = document.getElementById('trades');
+  const tr = DATA.recent_trades || [];
+  if(!tr.length){ el.innerHTML='<div class="empty">暂无数据</div>'; return; }
+  let h='<tr><th>基金</th><th>买入日</th><th>卖出日</th><th>持有</th><th>收益</th></tr>';
+  tr.forEach(t=>{
+    h+='<tr><td>'+t.name+'</td><td>'+t.buy_date+'</td><td>'+t.sell_date+'</td><td>'+t.hold+'天</td><td class="'+(t.ret>=0?'pos':'neg')+'">'+(t.ret>=0?'+':'')+t.ret+'%</td></tr>';
+  });
+  el.innerHTML=h;
+})();
 // 胜率-盈利率散点图
 const ps = document.getElementById('psChart');
 const XMIN=0.4, XMAX=1.9, YMIN=48, YMAX=68;
