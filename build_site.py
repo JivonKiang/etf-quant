@@ -74,9 +74,74 @@ def build_equity(sample=240):
         equity.append([d, round(nav_val, 4)])
     if len(equity) > sample:
         step = len(equity) / sample
+        equity_full = list(equity)
         equity = [equity[int(i * step)] for i in range(sample)]
         equity.append([ds[-1], round(nav_val, 4)])
-    return equity
+        return equity, equity_full
+    return equity, list(equity)
+
+
+def build_benchmark():
+    """基准：等权买入持有 7 只标的（不交易）"""
+    fund_ret = {}
+    all_dates = set()
+    for code in config.POOL:
+        arr = [a for a in signal_monitor.fetch(code) if a["date"] >= "2020-01-01"]
+        nav = [a["nav"] for a in arr]
+        dates = [a["date"] for a in arr]
+        ret = {}
+        for i in range(1, len(nav)):
+            ret[dates[i]] = nav[i] / nav[i - 1] - 1
+        fund_ret[code] = ret
+        all_dates.update(dates)
+    ds = sorted(all_dates)
+    navv = 1.0
+    eq = []
+    for d in ds:
+        rs = [fund_ret[c].get(d, 0.0) for c in config.POOL]
+        navv *= (1 + sum(rs) / len(rs))
+        eq.append([d, round(navv, 4)])
+    return eq
+
+
+def calc_metrics(equity, benchmark, trades):
+    import statistics
+    days = (datetime.date.fromisoformat(equity[-1][0]) - datetime.date.fromisoformat(equity[0][0])).days
+    cagr = (equity[-1][1] / equity[0][1]) ** (365 / days) - 1
+    peak = 0
+    mdd = 0
+    for d, nav in equity:
+        peak = max(peak, nav)
+        mdd = min(mdd, nav / peak - 1)
+    mdd = abs(mdd)
+    daily = [equity[i][1] / equity[i - 1][1] - 1 for i in range(1, len(equity))]
+    sd = statistics.stdev(daily) if len(daily) > 1 else 0
+    vol = sd * (252 ** 0.5)
+    sharpe = (cagr - 0.02) / vol if vol > 0 else 0
+    calmar = cagr / mdd if mdd > 0 else 0
+    wins = [t["ret"] for t in trades if t["ret"] > 0]
+    losses = [t["ret"] for t in trades if t["ret"] <= 0]
+    avg_win = sum(wins) / len(wins) if wins else 0
+    avg_loss = abs(sum(losses) / len(losses)) if losses else 0
+    pl_ratio = avg_win / avg_loss if avg_loss > 0 else 0
+    pf = sum(wins) / abs(sum(losses)) if losses else 0
+    b_cagr = (benchmark[-1][1] / benchmark[0][1]) ** (365 / days) - 1
+    b_peak = 0
+    b_mdd = 0
+    for d, nav in benchmark:
+        b_peak = max(b_peak, nav)
+        b_mdd = min(b_mdd, nav / b_peak - 1)
+    return {
+        "cum_return": round((equity[-1][1] - 1) * 100, 1),
+        "cagr": round(cagr * 100, 1), "mdd": round(mdd * 100, 1),
+        "volatility": round(vol * 100, 1), "sharpe": round(sharpe, 2),
+        "calmar": round(calmar, 2), "pl_ratio": round(pl_ratio, 2),
+        "profit_factor": round(pf, 2),
+        "win_rate": round(sum(1 for t in trades if t["ret"] > 0) / len(trades) * 100, 1) if trades else 0,
+        "trades": len(trades),
+        "bench_cum": round((benchmark[-1][1] - 1) * 100, 1),
+        "bench_cagr": round(b_cagr * 100, 1), "bench_mdd": round(abs(b_mdd) * 100, 1),
+    }
 
 
 def build_signal_analysis(signals, look_forward=20):
@@ -168,6 +233,10 @@ def build_data():
                 "trades": len(pts),
             })
 
+    equity_display, equity_full = build_equity()
+    benchmark = build_benchmark()
+    metrics = calc_metrics(equity_full, benchmark, all_trades)
+
     return {
         "date": str(datetime.date.today()),
         "strategy": {"fast": f, "slow": s, "hold_days": hd},
@@ -177,7 +246,9 @@ def build_data():
         "yearly": yearly_sorted,
         "funds": fund_detail,
         "param_space": param_space,
-        "equity": build_equity(),
+        "equity": equity_display,
+        "benchmark": benchmark,
+        "metrics": metrics,
         "signal_analysis": build_signal_analysis(signals),
     }
 
@@ -252,6 +323,10 @@ td:first-child,th:first-child{text-align:left}
 tr:last-child td{border-bottom:none}
 .pos{color:var(--up);font-weight:700} .neg{color:var(--down);font-weight:700}
 .note{font-size:12px;color:var(--sub);margin-top:12px;line-height:1.7}
+.mkpi{background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:13px 10px;text-align:center}
+.mkpi .v{font-size:21px;font-weight:800;color:var(--brand)}
+.mkpi .v.good{color:var(--down)} .mkpi .v.bad{color:var(--up)}
+.mkpi .l{font-size:11px;color:var(--sub);margin-top:3px}
 footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
 @media(max-width:640px){
   .kpis{grid-template-columns:repeat(2,1fr)}
@@ -290,9 +365,19 @@ footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
   </div>
 
   <div class="card">
-    <h2><span class="dot"></span>回测资金曲线</h2>
+    <h2><span class="dot"></span>绩效指标（2020 至今）</h2>
+    <div class="grid" id="metricsGrid"></div>
+    <div class="note">对比基准「等权买入持有 7 只标的」：累计 +{bench_cum}%、最大回撤 {bench_mdd}%。本策略以更低回撤换取稳健收益。</div>
+  </div>
+
+  <div class="card">
+    <h2><span class="dot"></span>回测资金曲线（策略 vs 基准）</h2>
     <div id="equityChart"></div>
-    <div class="note">7 只标的等权组合，按策略信号买入持有、空仓持币的累计净值（2020 年至今）。</div>
+    <div class="ps-legend">
+      <span class="lg"><span class="sw" style="background:#6366f1"></span>策略（金叉+MACD）</span>
+      <span class="lg"><span class="sw" style="background:#94a3b8"></span>基准（买入持有）</span>
+    </div>
+    <div class="note">7 只标的等权组合净值（2020 年至今）；策略空仓持币，基准始终满仓。</div>
   </div>
 
   <div class="card">
@@ -413,8 +498,9 @@ renderPS();
   const eq = DATA.equity || [];
   if(!eq.length){ el.innerHTML='<div class="empty">暂无数据</div>'; return; }
   const W=680, H=240, L=44, R=14, T=14, B=30;
-  const navs = eq.map(x=>x[1]);
-  const min=Math.min(1, ...navs), max=Math.max(...navs);
+  const bm = DATA.benchmark || [];
+  const allv = eq.map(x=>x[1]).concat(bm.map(x=>x[1]));
+  const min=Math.min(1, ...allv), max=Math.max(...allv);
   function px(i){ return L + i/(eq.length-1)*(W-L-R); }
   function py(v){ return T + (max-v)/(max-min)*(H-T-B); }
   let svg='<svg class="ps-svg" viewBox="0 0 '+W+' '+H+'">';
@@ -423,6 +509,11 @@ renderPS();
     svg+='<text x="'+(L-6)+'" y="'+(py(v)+3)+'" font-size="9" fill="#94a3b8" text-anchor="end">'+v.toFixed(2)+'</text>';
   }
   svg+='<line x1="'+L+'" y1="'+py(1)+'" x2="'+(W-R)+'" y2="'+py(1)+'" stroke="#f59e0b" stroke-dasharray="4,3"/>';
+  if(bm.length){
+    let db='';
+    bm.forEach((x,i)=>{ db+=(i?'L':'M')+(L+i/(bm.length-1)*(W-L-R)).toFixed(1)+' '+py(x[1]).toFixed(1); });
+    svg+='<path d="'+db+'" fill="none" stroke="#94a3b8" stroke-width="1.5"/>';
+  }
   let d='';
   eq.forEach((x,i)=>{ d += (i?'L':'M')+px(i).toFixed(1)+' '+py(x[1]).toFixed(1); });
   svg+='<path d="'+d+' L'+(W-R)+' '+py(min)+' L'+L+' '+py(min)+' Z" fill="rgba(99,102,241,.08)"/>';
@@ -431,6 +522,23 @@ renderPS();
   idx.forEach(i=>{ svg+='<text x="'+px(i)+'" y="'+(H-6)+'" font-size="9" fill="#94a3b8" text-anchor="middle">'+eq[i][0]+'</text>'; });
   svg+='</svg>';
   el.innerHTML=svg;
+})();
+// 绩效指标
+(function(){
+  const el = document.getElementById('metricsGrid');
+  const m = DATA.metrics || {};
+  if(!m.cagr){ el.innerHTML='<div class="empty">暂无数据</div>'; return; }
+  const items = [
+    ['年化收益', m.cagr+'%', m.cagr>=10?'good':''],
+    ['最大回撤', m.mdd+'%', m.mdd<10?'good':(m.mdd>20?'bad':'')],
+    ['夏普比率', m.sharpe, m.sharpe>=1?'good':''],
+    ['卡玛比率', m.calmar, m.calmar>=1?'good':''],
+    ['盈亏比', m.pl_ratio, m.pl_ratio>=1.5?'good':''],
+    ['盈利因子', m.profit_factor, m.profit_factor>=1.5?'good':''],
+  ];
+  let h='';
+  items.forEach(it=>{ h+='<div class="mkpi"><div class="v '+it[2]+'">'+it[1]+'</div><div class="l">'+it[0]+'</div></div>'; });
+  el.innerHTML=h;
 })();
 // 相似K线历史走势
 (function(){
@@ -485,7 +593,9 @@ def main():
             .replace("{win_rate}", str(data["summary"]["win_rate"]))
             .replace("{avg_ret}", str(data["summary"]["avg_ret"]))
             .replace("{trades}", str(data["summary"]["trades"]))
-            .replace("{n_funds}", str(data["n_funds"])))
+            .replace("{n_funds}", str(data["n_funds"]))
+            .replace("{bench_cum}", str(data["metrics"]["bench_cum"]))
+            .replace("{bench_mdd}", str(data["metrics"]["bench_mdd"])))
     html = html.replace("__DATA__", json.dumps(data, ensure_ascii=False))
     out = os.path.join(os.path.dirname(__file__), "index.html")
     open(out, "w", encoding="utf-8").write(html)
