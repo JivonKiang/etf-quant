@@ -98,9 +98,14 @@ def state_of(arr):
               "latest_date": latest_date}
     if bd == latest_date:
         return "BUY", detail                      # 最新净值日刚金叉 -> 买入
+    tp = config.STRATEGY.get("take_profit")
+    if tp and detail["ret"] >= tp:
+        detail["reason"] = "止盈"
+        return "SELL_READY", detail               # 达到止盈线 -> 卖出
     if held < config.STRATEGY["hold_days"]:
         return "HOLDING", detail                  # 持有中
     if held == config.STRATEGY["hold_days"]:
+        detail["reason"] = "满期"
         return "SELL_READY", detail               # 今日满期，可卖出
     return "WAIT", detail                         # 已了结，等新金叉
 
@@ -140,7 +145,7 @@ def render_markdown(rows):
         L.append("")
     if not (buy or hold or sell):
         L.append("今日无买入信号，也无持仓。")
-    L += ["", f"> 策略：MA{config.STRATEGY['fast']}/MA{config.STRATEGY['slow']} 金叉 + MACD 柱>0 买入，持有 {config.STRATEGY['hold_days']} 天卖出；历史综合胜率 66.1%。"]
+    L += ["", f"> 策略：MA{config.STRATEGY['fast']}/MA{config.STRATEGY['slow']} 金叉 + MACD 柱>0 买入，持有 {config.STRATEGY['hold_days']} 天或止盈 +15% 卖出；历史综合胜率 62.4%。"]
     return "\n".join(L)
 
 
@@ -154,7 +159,7 @@ def build_email_html(rows):
         cards += ('<div style="border:1px solid #e6e8ef;border-left:4px solid #ef4444;border-radius:10px;'
                   'padding:14px;margin-bottom:10px;background:#fff;">'
                   '<div style="font-size:15px;font-weight:700;color:#1e293b;">%s</div>'
-                  '<div style="font-size:12px;color:#64748b;margin-top:4px;">代码 %s · 建议买入持有 %d 天 · C类≥7天免赎回费</div>'
+                  '<div style="font-size:12px;color:#64748b;margin-top:4px;">代码 %s · 建议买入持有 %d 天（或 +15%% 止盈）· C类≥7天免赎回费</div>'
                   '</div>') % (r["name"], r["code"], hd)
     for r in holds:
         cards += ('<div style="border:1px solid #e6e8ef;border-left:4px solid #2563eb;border-radius:10px;'
@@ -166,13 +171,13 @@ def build_email_html(rows):
             '<div style="max-width:600px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 20px rgba(15,23,42,.08);">'
             '<div style="background:linear-gradient(135deg,#1e1b4b,#4f46e5,#7c3aed);padding:24px 22px;color:#fff;">'
             '<div style="font-size:19px;font-weight:800;">&#128200; ETF 买入信号</div>'
-            '<div style="font-size:13px;opacity:.85;margin-top:6px;">%s · MA%d/MA%d 金叉 + MACD 过滤 · 持有 %d 天</div></div>'
+            '<div style="font-size:13px;opacity:.85;margin-top:6px;">%s · MA%d/MA%d 金叉 + MACD 过滤 · 持有 %d 天或止盈 15%%</div></div>'
             '<div style="padding:20px 22px;">'
             '<div style="font-size:13px;color:#64748b;margin-bottom:12px;">今日 %d 只标的出现买入信号：</div>'
             '%s'
             '<div style="margin-top:14px;padding:12px 14px;background:#f8fafc;border-radius:10px;font-size:12.5px;color:#475569;line-height:1.7;">'
-            '&#128161; <b>操作建议</b>：支付宝搜索对应代码，今日 15:00 前买入按当日净值确认；持有满 %d 天再考虑卖出。<br>'
-            '&#128202; <b>策略依据</b>：历史综合胜率 66.1%%，平均每笔 +1.48%%，历年 54%%~79%%。</div></div>'
+            '&#128161; <b>操作建议</b>：支付宝搜索对应代码，今日 15:00 前买入按当日净值确认；持有满 %d 天或涨幅达 +15%% 时止盈卖出。<br>'
+            '&#128202; <b>策略依据</b>：历史综合胜率 62.4%%，最大回撤 4.9%%，夏普 0.92，卡玛 1.47。</div></div>'
             '<div style="padding:14px 22px;background:#f8fafc;font-size:11px;color:#94a3b8;line-height:1.6;">'
             '本邮件由 ETF 量化系统自动发送 · 数据来源：天天基金 · 仅供研究参考，不构成投资建议 '
             '<a href="https://jivonkiang.github.io/etf-quant/" style="color:#6366f1;">查看完整面板 &rarr;</a></div>'
