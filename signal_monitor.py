@@ -129,12 +129,12 @@ def render_markdown(rows):
 def send_mail(subject, body):
     import smtplib
     from email.mime.text import MIMEText
-    host = os.environ.get("SMTP_HOST")
+    host = os.environ.get("MAIL_SERVER")
     if not host:
         return False
-    port = int(os.environ.get("SMTP_PORT", 465))
-    user = os.environ.get("SMTP_USER", "")
-    pwd = os.environ.get("SMTP_PASS", "")
+    port = int(os.environ.get("MAIL_PORT", 465))
+    user = os.environ.get("MAIL_USERNAME", "")
+    pwd = os.environ.get("MAIL_PASSWORD", "")
     to = os.environ.get("MAIL_TO", user)
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = subject
@@ -153,6 +153,8 @@ def send_mail(subject, body):
 
 if __name__ == "__main__":
     rows = check_all()
+    out_json = os.path.join(os.path.dirname(__file__), "signals.json")
+    json.dump(rows, open(out_json, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     if "--json" in sys.argv:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
     else:
