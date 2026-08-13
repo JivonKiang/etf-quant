@@ -65,6 +65,22 @@ def build_data():
     avg_all = sum(t["ret"] for t in all_trades) / n_all if n_all else 0
     avg_hold = sum(t["hold"] for t in all_trades) / n_all if n_all else 0
 
+    # 参数空间：不同持有期的胜率-盈利率（供折线图交互）
+    param_space = []
+    for hold_days in [7, 10, 12, 15, 20, 25, 30, 45, 60]:
+        pts = []
+        for code in config.POOL:
+            arr = [a for a in signal_monitor.fetch(code) if a["date"] >= "2020-01-01"]
+            pts += fixed_hold_backtest(arr, f, s, hold_days)
+        if pts:
+            pw = sum(1 for t in pts if t["ret"] > 0)
+            param_space.append({
+                "hold_days": hold_days,
+                "win_rate": round(pw / len(pts) * 100, 1),
+                "avg_ret": round(sum(t["ret"] for t in pts) / len(pts) * 100, 2),
+                "trades": len(pts),
+            })
+
     return {
         "date": str(datetime.date.today()),
         "strategy": {"fast": f, "slow": s, "hold_days": hd},
@@ -73,6 +89,7 @@ def build_data():
         "signals": signals,
         "yearly": yearly_sorted,
         "funds": fund_detail,
+        "param_space": param_space,
     }
 
 
@@ -130,6 +147,17 @@ footer{text-align:center;color:#9ca3af;font-size:12px;margin-top:20px}
   header h1{font-size:19px}
   .kpi .v{font-size:22px}
 }
+.sliders{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:6px}
+.slider-item{flex:1;min-width:200px}
+.slider-item label{font-size:12px;color:var(--sub);display:flex;justify-content:space-between}
+.slider-item label b{color:var(--brand)}
+.slider-item input{width:100%;margin-top:6px;accent-color:var(--brand)}
+.ps-svg{width:100%;height:auto;display:block}
+.ps-legend{display:flex;gap:16px;font-size:12px;color:var(--sub);margin-top:8px;flex-wrap:wrap}
+.ps-legend .lg{display:flex;align-items:center;gap:5px}
+.ps-legend .sw{width:11px;height:11px;border-radius:50%;display:inline-block}
+.pick-note{font-size:12px;margin-top:10px;color:var(--sub);line-height:1.7}
+.pick-note b{color:var(--brand)}
 </style>
 </head>
 <body>
@@ -159,6 +187,21 @@ footer{text-align:center;color:#9ca3af;font-size:12px;margin-top:20px}
     <h2><span class="dot"></span>历年胜率（按买入年份）</h2>
     <div id="yearly"></div>
     <div class="note">虚线为 50% 胜率线；历年胜率均高于 50%，牛熊震荡市场均有效。</div>
+  </div>
+
+  <div class="card">
+    <h2><span class="dot"></span>胜率 × 盈利率（拖动选范围）</h2>
+    <div class="sliders">
+      <div class="slider-item"><label>最低胜率 <b id="winVal">55%</b></label><input type="range" id="winSlider" min="50" max="66" step="0.5" value="55"></div>
+      <div class="slider-item"><label>最低盈利率 <b id="retVal">1.0%</b></label><input type="range" id="retSlider" min="0.4" max="1.9" step="0.05" value="1.0"></div>
+    </div>
+    <div id="psChart"></div>
+    <div class="ps-legend">
+      <span class="lg"><span class="sw" style="background:#4f46e5"></span>当前采用（持有{hold_days}天）</span>
+      <span class="lg"><span class="sw" style="background:#dc2626"></span>符合所选范围</span>
+      <span class="lg"><span class="sw" style="background:#d1d5db"></span>不符合</span>
+    </div>
+    <div class="pick-note" id="pickNote"></div>
   </div>
 
   <div class="card">
@@ -199,6 +242,52 @@ DATA.funds.forEach(f=>{
   fh+='<tr><td>'+f.name+'</td><td>'+f.code+'</td><td>'+f.win_rate+'%</td><td class="'+(f.avg_ret>=0?'pos':'neg')+'">'+(f.avg_ret>=0?'+':'')+f.avg_ret+'%</td><td class="'+(f.cum_ret>=0?'pos':'neg')+'">'+(f.cum_ret>=0?'+':'')+f.cum_ret+'%</td><td>'+f.trades+'</td></tr>';
 });
 fd.innerHTML=fh;
+// 胜率-盈利率散点图（拖动阈值选范围）
+const ps = document.getElementById('psChart');
+const XMIN=0.4, XMAX=1.9, YMIN=50, YMAX=66;
+const L=52, R=660, T=18, B=278;
+function px(v){ return L + (v-XMIN)/(XMAX-XMIN)*(R-L); }
+function py(v){ return T + (YMAX-v)/(YMAX-YMIN)*(B-T); }
+let winThr=55, retThr=1.0;
+function renderPS(){
+  const curHold = DATA.strategy.hold_days;
+  let svg = '<svg class="ps-svg" viewBox="0 0 680 318">';
+  svg += '<line x1="'+L+'" y1="'+B+'" x2="'+R+'" y2="'+B+'" stroke="#e5e7eb"/>';
+  svg += '<line x1="'+L+'" y1="'+T+'" x2="'+L+'" y2="'+B+'" stroke="#e5e7eb"/>';
+  for(let x=XMIN; x<=XMAX+0.001; x+=0.3){
+    svg += '<text x="'+px(x)+'" y="'+(B+15)+'" font-size="10" fill="#9ca3af" text-anchor="middle">'+x.toFixed(1)+'%</text>';
+  }
+  for(let y=YMIN; y<=YMAX+0.001; y+=4){
+    svg += '<text x="'+(L-8)+'" y="'+(py(y)+3)+'" font-size="10" fill="#9ca3af" text-anchor="end">'+y+'%</text>';
+  }
+  svg += '<line x1="'+px(retThr)+'" y1="'+T+'" x2="'+px(retThr)+'" y2="'+B+'" stroke="#dc2626" stroke-dasharray="4,3" opacity="0.55"/>';
+  svg += '<line x1="'+L+'" y1="'+py(winThr)+'" x2="'+R+'" y2="'+py(winThr)+'" stroke="#dc2626" stroke-dasharray="4,3" opacity="0.55"/>';
+  DATA.param_space.forEach(p=>{
+    const cx=px(p.avg_ret), cy=py(p.win_rate);
+    const ok = p.win_rate>=winThr && p.avg_ret>=retThr;
+    const isCur = p.hold_days===curHold;
+    const r = isCur?6:4;
+    const color = isCur?'#4f46e5':(ok?'#dc2626':'#d1d5db');
+    svg += '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+color+'"/>';
+    svg += '<text x="'+cx+'" y="'+(cy-8)+'" font-size="9" fill="#6b7280" text-anchor="middle">'+p.hold_days+'d</text>';
+  });
+  svg += '</svg>';
+  ps.innerHTML = svg;
+  const okList = DATA.param_space.filter(p=>p.win_rate>=winThr && p.avg_ret>=retThr);
+  document.getElementById('winVal').textContent = winThr+'%';
+  document.getElementById('retVal').textContent = retThr.toFixed(2)+'%';
+  let note='';
+  if(okList.length){
+    note = '符合范围（胜率≥'+winThr+'% 且 盈利率≥'+retThr.toFixed(2)+'%）的持有期：<b>'+okList.map(p=>p.hold_days+'天').join('、')+'</b>。';
+    note += okList.some(p=>p.hold_days===curHold) ? ' 当前采用的 <b>'+curHold+'天</b> 满足你的要求。' : ' 当前采用的 '+curHold+'天 不在此范围内。';
+  } else {
+    note = '当前筛选过严，无满足的持有期，请放宽阈值。';
+  }
+  document.getElementById('pickNote').innerHTML = note;
+}
+document.getElementById('winSlider').addEventListener('input', e=>{winThr=parseFloat(e.target.value); renderPS();});
+document.getElementById('retSlider').addEventListener('input', e=>{retThr=parseFloat(e.target.value); renderPS();});
+renderPS();
 </script>
 </body>
 </html>
