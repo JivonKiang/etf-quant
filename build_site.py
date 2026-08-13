@@ -205,9 +205,15 @@ def load_positions():
 
 
 def build_positions():
-    """计算实际持仓的当前盈亏与状态"""
+    """计算实际持仓的当前盈亏 + 今日实时涨跌"""
+    pos = load_positions()
     result = []
-    for p in load_positions():
+    etf_codes = list(dict.fromkeys(config.ETF_MAP.get(p["code"], p["code"]) for p in pos))
+    try:
+        rt = signal_monitor.fetch_realtime(etf_codes) if etf_codes else {}
+    except Exception:
+        rt = {}
+    for p in pos:
         try:
             arr = signal_monitor.fetch(p["code"])
         except Exception:
@@ -216,8 +222,11 @@ def build_positions():
         latest_date = arr[-1]["date"]
         ret = latest_nav / p["buy_nav"] - 1
         held = (datetime.date.today() - datetime.date.fromisoformat(p["buy_date"])).days
+        etf_code = config.ETF_MAP.get(p["code"], p["code"])
+        real = rt.get(etf_code)
         result.append({**p, "latest_nav": round(latest_nav, 4),
-                       "ret": round(ret, 4), "held_days": held, "latest_date": latest_date})
+                       "ret": round(ret, 4), "held_days": held, "latest_date": latest_date,
+                       "realtime_chg": real["change_pct"] if real else None})
     return result
 
 
@@ -516,12 +525,14 @@ else{
   if(!pos.length){ el.innerHTML='<div class="empty">暂无持仓记录。在对话中告诉我「买入 006479 2000元」即可录入。</div>'; return; }
   const sigMap = {};
   (DATA.signals||[]).forEach(s=>{ sigMap[s.code]=s.state; });
-  let h='<table><tr><th>基金</th><th>买入日</th><th>金额</th><th>成本净值</th><th>现净值</th><th>盈亏</th><th>持有</th><th>操作</th></tr>';
+  let h='<table><tr><th>基金</th><th>买入日</th><th>金额</th><th>盈亏</th><th>今日实时</th><th>持有</th><th>操作</th></tr>';
   pos.forEach(p=>{
     const st = sigMap[p.code] || '';
     const op = (st==='SELL_READY'||st==='BUY') ? '<span class="st sell">该卖出</span>' : (st==='HOLDING'?'<span class="st hold">持有中</span>':'<span class="st wait">等待</span>');
     const ret = p.ret!=null ? ('<span class="'+(p.ret>=0?'pos':'neg')+'">'+fmtRet(p.ret)+'</span>') : '';
-    h+='<tr><td>'+p.name+'</td><td>'+p.buy_date+'</td><td>¥'+p.amount+'</td><td>'+p.buy_nav+'</td><td>'+p.latest_nav+'</td><td>'+ret+'</td><td>'+p.held_days+'天</td><td>'+op+'</td></tr>';
+    const rc = p.realtime_chg!=null ? parseFloat(p.realtime_chg) : null;
+    const rcHtml = rc!=null ? ('<span class="'+(rc>=0?'pos':'neg')+'">'+(rc>=0?'+':'')+rc+'%</span>') : '<span class="cd">-</span>';
+    h+='<tr><td>'+p.name+'</td><td>'+p.buy_date+'</td><td>¥'+p.amount+'</td><td>'+ret+'</td><td>'+rcHtml+'</td><td>'+p.held_days+'天</td><td>'+op+'</td></tr>';
   });
   h+='</table>';
   el.innerHTML=h;
