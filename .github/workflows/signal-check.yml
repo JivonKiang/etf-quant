@@ -2,10 +2,10 @@ name: ETF Signal & Deploy
 
 on:
   schedule:
-    # UTC 6:00 = 北京时间 14:00（完整跑）
+    # UTC 6:00 = 北京时间 14:00（完整跑，准备数据）
     - cron: '0 6 * * 1-5'
-    # UTC 6:30 = 北京时间 14:30（用最新数据再验证）
-    - cron: '30 6 * * 1-5'
+    # UTC 6:45 = 北京时间 14:45（发建议，3点收盘前15分钟）
+    - cron: '45 6 * * 1-5'
   workflow_dispatch: {}
 
 permissions:
