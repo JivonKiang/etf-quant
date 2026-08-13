@@ -225,6 +225,10 @@ def build_data():
     f, s, hd = (config.STRATEGY["fast"], config.STRATEGY["slow"], config.STRATEGY["hold_days"])
     tp = config.STRATEGY.get("take_profit")
     signals = signal_monitor.check_all()
+    data_date = ""
+    for sig in signals:
+        if sig.get("latest_date"):
+            data_date = max(data_date, sig["latest_date"])
     all_trades = []
     fund_detail = []
     yearly = {}
@@ -281,6 +285,7 @@ def build_data():
 
     return {
         "date": str(datetime.date.today()),
+        "data_date": data_date,
         "strategy": {"fast": f, "slow": s, "hold_days": hd},
         "summary": {"win_rate": round(win_all / n_all * 100, 1), "trades": n_all,
                     "avg_ret": round(avg_all * 100, 2), "avg_hold": round(avg_hold)},
@@ -387,7 +392,7 @@ footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
         <h1>ETF 量化信号<span class="badge">MA{fast}/MA{slow} 金叉 · MACD 过滤</span></h1>
         <div class="sub">支付宝 C 类 ETF 联接基金 · 买入持有 {hold_days} 天 · 每天 14:30 更新</div>
       </div>
-      <div class="date">更新于 {date}</div>
+      <div class="date">更新于 {date} · 净值数据截至 {data_date}</div>
     </div>
     <div class="kpis">
       <div class="kpi"><div class="v">{win_rate}%</div><div class="l">历史综合胜率</div></div>
@@ -398,12 +403,13 @@ footer{text-align:center;color:#94a3b8;font-size:12px;margin-top:22px}
   </div>
 
   <div class="card">
-    <h2><span class="dot"></span>今日信号<span class="cnt" id="sigCnt"></span></h2>
+    <h2><span class="dot"></span>策略信号（非你的持仓）<span class="cnt" id="sigCnt"></span></h2>
     <div id="signals"></div>
+    <div class="note">以下为策略每日扫描的 7 只候选标的信号，<b>不是你的持仓</b>；你的实际持仓见下方「我的持仓」。</div>
   </div>
 
   <div class="card">
-    <h2><span class="dot"></span>我的持仓<span class="cnt" id="posCnt"></span></h2>
+    <h2><span class="dot"></span>我的持仓（仅你回报的）<span class="cnt" id="posCnt"></span></h2>
     <div id="positions"></div>
     <div class="note">支付宝无公开 API，持仓需手动回报同步：在对话里告诉我「买入/卖出 基金代码 金额」，我记入持仓表并更新此页。</div>
   </div>
@@ -674,6 +680,7 @@ def main():
             .replace("{slow}", str(data["strategy"]["slow"]))
             .replace("{hold_days}", str(data["strategy"]["hold_days"]))
             .replace("{date}", data["date"])
+            .replace("{data_date}", data.get("data_date", ""))
             .replace("{win_rate}", str(data["summary"]["win_rate"]))
             .replace("{avg_ret}", str(data["summary"]["avg_ret"]))
             .replace("{trades}", str(data["summary"]["trades"]))
