@@ -145,7 +145,7 @@ def render_markdown(rows):
         L.append("")
     if not (buy or hold or sell):
         L.append("今日无买入信号，也无持仓。")
-    L += ["", f"> 策略：MA{config.STRATEGY['fast']}/MA{config.STRATEGY['slow']} 金叉 + MACD 柱>0 买入，持有 {config.STRATEGY['hold_days']} 天或止盈 +15% 卖出；历史综合胜率 62.4%。"]
+    L += ["", f"> 策略：MA{config.STRATEGY['fast']}/MA{config.STRATEGY['slow']} 金叉 + MACD 柱>0 买入，持有 {config.STRATEGY['hold_days']} 天或止盈 +15% 卖出；历史综合胜率 66.0%。"]
     return "\n".join(L)
 
 
@@ -177,7 +177,7 @@ def build_email_html(rows):
             '%s'
             '<div style="margin-top:14px;padding:12px 14px;background:#f8fafc;border-radius:10px;font-size:12.5px;color:#475569;line-height:1.7;">'
             '&#128161; <b>操作建议</b>：支付宝搜索对应代码，今日 15:00 前买入按当日净值确认；持有满 %d 天或涨幅达 +15%% 时止盈卖出。<br>'
-            '&#128202; <b>策略依据</b>：历史综合胜率 62.4%%，最大回撤 4.9%%，夏普 0.92，卡玛 1.47。</div></div>'
+            '&#128202; <b>策略依据</b>：历史综合胜率 66.0%%，最大回撤 5.8%%，夏普 0.90，卡玛 1.38。</div></div>'
             '<div style="padding:14px 22px;background:#f8fafc;font-size:11px;color:#94a3b8;line-height:1.6;">'
             '本邮件由 ETF 量化系统自动发送 · 数据来源：天天基金 · 仅供研究参考，不构成投资建议 '
             '<a href="https://jivonkiang.github.io/etf-quant/" style="color:#6366f1;">查看完整面板 &rarr;</a></div>'
@@ -250,7 +250,7 @@ def build_daily_report(rows):
         for b in buys:
             lines.append("- %s（%s）：MA%d/MA%d 金叉，建议买入持有 %d 天" % (b["name"], b["code"], f, s, hd))
     else:
-        lines.append("今日无买入信号（7 只标的均为观望/持有）。")
+        lines.append("今日无买入信号（%d 只标的均为观望/持有）。" % len(config.POOL))
     lines.append("")
     pos = load_positions()
     if pos:
@@ -282,7 +282,8 @@ if __name__ == "__main__":
     else:
         print(render_markdown(rows))
     buys = [r for r in rows if r["state"] == "BUY"]
-    if config.EMAIL_ENABLED:
+    no_mail = "--no-mail" in sys.argv
+    if config.EMAIL_ENABLED and not no_mail:
         if buys:
             body = build_email_html(rows)
             ok = send_mail(f"📈 ETF买入信号 {NOW}：" + "、".join(r["name"] for r in buys), body, html=True)
