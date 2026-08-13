@@ -220,8 +220,28 @@ def load_positions():
     return []
 
 
+def fetch_realtime(codes):
+    """腾讯实时行情，返回 {场内code: {name, price, change_pct}}"""
+    url = 'http://qt.gtimg.cn/q=' + ','.join(codes)
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    txt = urllib.request.urlopen(req, timeout=10).read().decode('gbk', 'ignore')
+    result = {}
+    for line in txt.strip().split(';'):
+        line = line.strip()
+        if not line:
+            continue
+        m = re.search(r'v_(\w+)="(.*?)"', line)
+        if not m:
+            continue
+        code = m.group(1)
+        p = m.group(2).split('~')
+        if len(p) > 32:
+            result[code] = {'name': p[1], 'price': p[3], 'change_pct': p[32]}
+    return result
+
+
 def build_daily_report(rows):
-    """生成每日建议邮件（含信号 + 持仓状态），无买入信号时也发"""
+    """生成每日建议邮件（含信号 + 持仓实时走势），无买入信号时也发"""
     f, s, hd = config.STRATEGY["fast"], config.STRATEGY["slow"], config.STRATEGY["hold_days"]
     buys = [r for r in rows if r["state"] == "BUY"]
     lines = ["【ETF 每日建议】%s" % NOW, ""]
@@ -234,16 +254,20 @@ def build_daily_report(rows):
     lines.append("")
     pos = load_positions()
     if pos:
-        lines.append("你的持仓：")
+        lines.append("你的持仓（今日实时涨跌）：")
+        etf_codes = list(dict.fromkeys(config.ETF_MAP.get(p["code"], p["code"]) for p in pos))
+        try:
+            rt = fetch_realtime(etf_codes)
+        except Exception:
+            rt = {}
         for p in pos:
-            try:
-                arr = fetch(p["code"])
-                cur = arr[-1]["nav"]
-                ret = cur / p["buy_nav"] - 1
-                held = (datetime.date.today() - datetime.date.fromisoformat(p["buy_date"])).days
-                lines.append("- %s（%s）：%+.2f%%（持有 %d 天）" % (p["name"], p["code"], ret * 100, held))
-            except Exception:
-                lines.append("- %s（%s）：数据获取失败" % (p["name"], p["code"]))
+            etf_code = config.ETF_MAP.get(p["code"], p["code"])
+            real = rt.get(etf_code)
+            held = (datetime.date.today() - datetime.date.fromisoformat(p["buy_date"])).days
+            if real:
+                lines.append("- %s（%s）：持有%d天，今日 %s%%" % (p["name"], p["code"], held, real["change_pct"]))
+            else:
+                lines.append("- %s（%s）：持有%d天" % (p["name"], p["code"], held))
     lines.append("")
     lines.append("查看面板 / 回报操作：https://jivonkiang.github.io/etf-quant/")
     return "\n".join(lines)
