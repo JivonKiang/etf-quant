@@ -122,7 +122,7 @@ def render_markdown(rows):
         L.append("")
     if not (buy or hold or sell):
         L.append("今日无买入信号，也无持仓。")
-    L += ["", f"> 策略：MA{config.STRATEGY['fast']}/MA{config.STRATEGY['slow']} 金叉买入，持有 {config.STRATEGY['hold_days']} 天卖出；历史综合胜率 59.8%。"]
+    L += ["", f"> 策略：MA{config.STRATEGY['fast']}/MA{config.STRATEGY['slow']} 金叉买入，持有 {config.STRATEGY['hold_days']} 天卖出；历史综合胜率 63.1%。"]
     return "\n".join(L)
 
 
